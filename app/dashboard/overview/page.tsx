@@ -14,7 +14,13 @@ interface SummaryData {
   draftEvaluations: number
   submitted: number
   totalLandArea: number
-  evaluations: Array<{ _id: string; name: string; status: string; area: number; updatedAt: string }>
+  evaluations: Array<{
+    _id: string
+    name: string
+    status: string
+    area: number
+    updatedAt: string
+  }>
   totalRevenue: number
   averageProjectCost: number
   draftCount: number
@@ -31,20 +37,24 @@ export default function OverviewPage() {
   const fetchSummary = useCallback(async () => {
     setLoading(true)
     setError(null)
+
     try {
-      const summary = await dashboardApi.summary()
+      const summary: any = await dashboardApi.summary()
+
       setData({
-        activeSites: summary.activeSites,
-        draftEvaluations: summary.draftEvaluations,
-        submitted: summary.submitted,
-        totalLandArea: summary.totalLandArea,
-        evaluations: summary.evaluations.map((e) => ({
+        activeSites: summary.activeSites ?? 0,
+        draftEvaluations: summary.draftEvaluations ?? 0,
+        submitted: summary.submitted ?? 0,
+        totalLandArea: summary.totalLandArea ?? 0,
+
+        evaluations: (summary.evaluations ?? []).map((e: any) => ({
           _id: e._id,
           name: e.name,
           status: e.status,
           area: e.area ?? 0,
           updatedAt: e.updatedAt,
         })),
+
         totalRevenue: summary.totalRevenue ?? 0,
         averageProjectCost: summary.averageProjectCost ?? 0,
         draftCount: summary.draftCount ?? summary.draftEvaluations ?? 0,
@@ -64,37 +74,12 @@ export default function OverviewPage() {
   }, [fetchSummary])
 
   if (loading) {
-    return (
-      <div className="space-y-6">
-        <div>
-          <h1 className="text-3xl font-bold tracking-tight">Overview</h1>
-          <p className="text-muted-foreground">Sales pipeline overview - site evaluations and infrastructure planning</p>
-        </div>
-        <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
-          {[1, 2, 3, 4].map((i) => (
-            <Card key={i} className="border-l-4 border-l-[#387F43]">
-              <CardHeader className="pb-2">
-                <CardDescription className="text-xs">—</CardDescription>
-                <CardTitle className="text-2xl text-[#387F43]">—</CardTitle>
-              </CardHeader>
-              <CardContent>
-                <p className="text-xs text-muted-foreground">Loading…</p>
-              </CardContent>
-            </Card>
-          ))}
-        </div>
-        <p className="text-sm text-muted-foreground">Loading dashboard…</p>
-      </div>
-    )
+    return <div className="p-6">Loading dashboard...</div>
   }
 
   if (error) {
     return (
-      <div className="space-y-6">
-        <div>
-          <h1 className="text-3xl font-bold tracking-tight">Overview</h1>
-          <p className="text-muted-foreground">Sales pipeline overview - site evaluations and infrastructure planning</p>
-        </div>
+      <div className="p-6">
         <Card className="border-l-4 border-l-destructive">
           <CardHeader>
             <CardTitle className="flex items-center gap-2 text-destructive">
@@ -104,30 +89,28 @@ export default function OverviewPage() {
             <CardDescription>{error}</CardDescription>
           </CardHeader>
           <CardContent>
-            <Button onClick={fetchSummary} variant="outline">Try again</Button>
+            <Button onClick={fetchSummary} variant="outline">
+              Try again
+            </Button>
           </CardContent>
         </Card>
       </div>
     )
   }
 
-  if (!data) {
-    return null
-  }
+  if (!data) return null
 
   const {
     activeSites,
-    draftEvaluations,
-    submitted,
     totalLandArea,
     evaluations,
     totalRevenue,
     averageProjectCost,
     draftCount,
     submittedCount,
-    totalFarms,
     monthlyRevenue,
   } = data
+
   const activeSitesList = evaluations.slice(0, 10).map((e) => ({
     name: e.name,
     status: e.status,
@@ -136,7 +119,7 @@ export default function OverviewPage() {
   }))
 
   const sitesSalesData =
-    monthlyRevenue && monthlyRevenue.length > 0
+    monthlyRevenue.length > 0
       ? monthlyRevenue.map((m) => ({
           month: m.month,
           revenue: m.total,
@@ -144,174 +127,96 @@ export default function OverviewPage() {
       : []
 
   return (
-    <div className="space-y-6">
-      <div>
-        <h1 className="text-3xl font-bold tracking-tight">Overview</h1>
-        <p className="text-muted-foreground">Sales pipeline overview - site evaluations and infrastructure planning</p>
-      </div>
+    <div className="space-y-6 p-6">
+      <h1 className="text-3xl font-bold">Overview</h1>
 
       <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
-        <Card className="border-l-4 border-l-[#387F43]">
-          <CardHeader className="pb-2">
-            <CardDescription className="text-xs">Active Sites</CardDescription>
-            <CardTitle className="text-2xl text-[#387F43]">{activeSites}</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <p className="text-xs text-muted-foreground">Being evaluated</p>
-          </CardContent>
-        </Card>
 
-        <Card className="border-l-4 border-l-orange-500">
-          <CardHeader className="pb-2">
-            <CardDescription className="text-xs">Draft Evaluations</CardDescription>
-            <CardTitle className="text-2xl text-orange-600">{draftCount}</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <p className="text-xs text-muted-foreground">Boundaries pending</p>
-          </CardContent>
-        </Card>
-
-        <Card className="border-l-4 border-l-green-600">
-          <CardHeader className="pb-2">
-            <CardDescription className="text-xs">Submitted</CardDescription>
-            <CardTitle className="text-2xl text-green-600">{submittedCount}</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="flex items-center gap-2 text-xs">
-              <TrendingUp className="h-3 w-3 text-green-600" />
-              <span className="text-green-600">Submitted</span>
-            </div>
-          </CardContent>
-        </Card>
-
-        <Card className="border-l-4 border-l-blue-500">
-          <CardHeader className="pb-2">
-            <CardDescription className="text-xs">Total Land Area</CardDescription>
-            <CardTitle className="text-2xl text-blue-500">{Math.round(totalLandArea * 100) / 100} acres</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <p className="text-xs text-muted-foreground">Across all sites</p>
-          </CardContent>
-        </Card>
-
-        <Card className="border-l-4 border-l-emerald-500">
-          <CardHeader className="pb-2">
-            <CardDescription className="text-xs">Total Revenue</CardDescription>
-            <CardTitle className="text-2xl text-emerald-600">
-              {totalRevenue.toLocaleString("en-IN", {
-                style: "currency",
-                currency: "INR",
-                maximumFractionDigits: 0,
-              })}
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            <p className="text-xs text-muted-foreground">From submitted evaluations</p>
-          </CardContent>
-        </Card>
-
-        <Card className="border-l-4 border-l-purple-500">
-          <CardHeader className="pb-2">
-            <CardDescription className="text-xs">Average Project Cost</CardDescription>
-            <CardTitle className="text-2xl text-purple-600">
-              {averageProjectCost.toLocaleString("en-IN", {
-                style: "currency",
-                currency: "INR",
-                maximumFractionDigits: 0,
-              })}
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            <p className="text-xs text-muted-foreground">Per submitted evaluation</p>
-          </CardContent>
-        </Card>
-      </div>
-
-      <div className="grid gap-6 lg:grid-cols-2">
         <Card>
           <CardHeader>
-            <CardTitle className="text-[#387F43]">Site Evaluation Pipeline</CardTitle>
-            <CardDescription>Summary</CardDescription>
+            <CardTitle>{activeSites}</CardTitle>
+            <CardDescription>Active Sites</CardDescription>
           </CardHeader>
-          <CardContent>
-            <ResponsiveContainer width="100%" height={250}>
-              <BarChart data={sitesSalesData}>
-                <CartesianGrid strokeDasharray="3 3" />
-                <XAxis dataKey="month" />
-                <YAxis />
-                <Tooltip />
-                <Legend />
-                <Bar dataKey="revenue" fill="#22c55e" name="Revenue" />
-              </BarChart>
-            </ResponsiveContainer>
-          </CardContent>
         </Card>
 
         <Card>
           <CardHeader>
-            <CardTitle className="flex items-center gap-2">
-              <CheckCircle className="h-5 w-5 text-[#387F43]" />
-              Quick Actions
-            </CardTitle>
-            <CardDescription>Common tasks</CardDescription>
+            <CardTitle>{draftCount}</CardTitle>
+            <CardDescription>Draft Evaluations</CardDescription>
           </CardHeader>
-          <CardContent className="space-y-3">
-            <Button className="w-full bg-[#387F43] hover:bg-[#2d6535]" asChild>
-              <Link href="/dashboard/farms">+ Start New Site Evaluation</Link>
-            </Button>
-            <Button className="w-full bg-transparent" variant="outline" asChild>
-              <Link href="/dashboard/farms">View Map Submissions</Link>
-            </Button>
-            <Button className="w-full bg-transparent" variant="outline">
-              Generate Cost Estimates
-            </Button>
-            <Button className="w-full bg-transparent" variant="outline">
-              Export Reports
-            </Button>
-          </CardContent>
         </Card>
+
+        <Card>
+          <CardHeader>
+            <CardTitle>{submittedCount}</CardTitle>
+            <CardDescription>Submitted</CardDescription>
+          </CardHeader>
+        </Card>
+
+        <Card>
+          <CardHeader>
+            <CardTitle>{Math.round(totalLandArea * 100) / 100} acres</CardTitle>
+            <CardDescription>Total Land Area</CardDescription>
+          </CardHeader>
+        </Card>
+
+        <Card>
+          <CardHeader>
+            <CardTitle>
+              ₹{totalRevenue.toLocaleString("en-IN")}
+            </CardTitle>
+            <CardDescription>Total Revenue</CardDescription>
+          </CardHeader>
+        </Card>
+
+        <Card>
+          <CardHeader>
+            <CardTitle>
+              ₹{averageProjectCost.toLocaleString("en-IN")}
+            </CardTitle>
+            <CardDescription>Average Project Cost</CardDescription>
+          </CardHeader>
+        </Card>
+
       </div>
 
       <Card>
         <CardHeader>
-          <CardTitle className="flex items-center gap-2">
-            <MapPin className="h-5 w-5 text-[#387F43]" />
-            Current Work Sites
-          </CardTitle>
-          <CardDescription>{activeSitesList.length} sites being worked on</CardDescription>
+          <CardTitle>Revenue Trend</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <ResponsiveContainer width="100%" height={250}>
+            <BarChart data={sitesSalesData}>
+              <CartesianGrid strokeDasharray="3 3" />
+              <XAxis dataKey="month" />
+              <YAxis />
+              <Tooltip />
+              <Legend />
+              <Bar dataKey="revenue" fill="#22c55e" />
+            </BarChart>
+          </ResponsiveContainer>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>Current Work Sites</CardTitle>
         </CardHeader>
         <CardContent>
           {activeSitesList.length === 0 ? (
-            <p className="text-sm text-muted-foreground py-4">No site evaluations yet. Create one from the Farms page.</p>
+            <p>No site evaluations yet.</p>
           ) : (
-            <div className="space-y-3">
-              {activeSitesList.map((site, idx) => (
-                <div key={idx} className="flex items-center justify-between p-3 border rounded-lg hover:bg-gray-50">
-                  <div className="flex-1">
-                    <p className="font-medium text-sm">{site.name}</p>
-                    <p className="text-xs text-muted-foreground mt-1">
-                      {site.area} acres • Last marked: {site.marked}
-                    </p>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    {site.status === "draft" ? (
-                      <span className="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-orange-100 text-orange-800">
-                        <Clock className="h-3 w-3 mr-1" />
-                        Draft
-                      </span>
-                    ) : (
-                      <span className="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-green-100 text-green-800">
-                        <CheckCircle className="h-3 w-3 mr-1" />
-                        Submitted
-                      </span>
-                    )}
-                    <Button size="sm" variant="outline" asChild>
-                      <Link href="/dashboard/farms">Open</Link>
-                    </Button>
-                  </div>
+            activeSitesList.map((site, idx) => (
+              <div key={idx} className="flex justify-between p-2 border rounded">
+                <div>
+                  <p>{site.name}</p>
+                  <p className="text-xs text-muted-foreground">
+                    {site.area} acres • {site.marked}
+                  </p>
                 </div>
-              ))}
-            </div>
+                <span>{site.status}</span>
+              </div>
+            ))
           )}
         </CardContent>
       </Card>
