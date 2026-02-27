@@ -28,7 +28,6 @@ import { WelcomeModal } from "@/components/welcome-modal"
 import { SafeImage } from "@/components/ui/safe-image"
 import { NotificationsDrawer } from "@/components/notifications/notifications-drawer"
 import { ProtectedLayout } from "@/app/dashboard/ProtectedLayout"
-
 export default function DashboardLayoutWrapper({
   children,
 }: {

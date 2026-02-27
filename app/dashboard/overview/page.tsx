@@ -74,15 +74,19 @@ export default function OverviewPage() {
   }, [fetchSummary])
 
   if (loading) {
-    return <div className="p-6">Loading dashboard...</div>
+    return (
+      <div className="max-w-7xl mx-auto px-6 py-8">
+        <p>Loading dashboard...</p>
+      </div>
+    )
   }
 
   if (error) {
     return (
-      <div className="p-6">
-        <Card className="border-l-4 border-l-destructive">
+      <div className="max-w-7xl mx-auto px-6 py-8">
+        <Card className="border-l-4 border-l-destructive rounded-2xl shadow-sm">
           <CardHeader>
-            <CardTitle className="flex items-center gap-2 text-destructive">
+            <CardTitle className="flex items-center gap-2 text-destructive text-xl font-semibold">
               <AlertCircle className="h-5 w-5" />
               Error loading dashboard
             </CardTitle>
@@ -127,94 +131,113 @@ export default function OverviewPage() {
       : []
 
   return (
-    <div className="space-y-6 p-6">
-      <h1 className="text-3xl font-bold">Overview</h1>
+    <div className="max-w-7xl mx-auto px-6 py-8 space-y-8">
+      <h1 className="text-3xl font-bold mb-2">Overview</h1>
 
-      <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
-
-        <Card>
-          <CardHeader>
-            <CardTitle>{activeSites}</CardTitle>
-            <CardDescription>Active Sites</CardDescription>
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+        <Card className="rounded-2xl shadow-sm">
+          <CardHeader className="p-6">
+            <CardDescription className="text-xs uppercase tracking-wide text-muted-foreground">
+              Active Sites
+            </CardDescription>
+            <CardTitle className="text-2xl font-semibold">{activeSites}</CardTitle>
           </CardHeader>
         </Card>
 
-        <Card>
-          <CardHeader>
-            <CardTitle>{draftCount}</CardTitle>
-            <CardDescription>Draft Evaluations</CardDescription>
+        <Card className="rounded-2xl shadow-sm">
+          <CardHeader className="p-6">
+            <CardDescription className="text-xs uppercase tracking-wide text-muted-foreground">
+              Draft Evaluations
+            </CardDescription>
+            <CardTitle className="text-2xl font-semibold">{draftCount}</CardTitle>
           </CardHeader>
         </Card>
 
-        <Card>
-          <CardHeader>
-            <CardTitle>{submittedCount}</CardTitle>
-            <CardDescription>Submitted</CardDescription>
+        <Card className="rounded-2xl shadow-sm">
+          <CardHeader className="p-6">
+            <CardDescription className="text-xs uppercase tracking-wide text-muted-foreground">
+              Submitted
+            </CardDescription>
+            <CardTitle className="text-2xl font-semibold">{submittedCount}</CardTitle>
           </CardHeader>
         </Card>
 
-        <Card>
-          <CardHeader>
-            <CardTitle>{Math.round(totalLandArea * 100) / 100} acres</CardTitle>
-            <CardDescription>Total Land Area</CardDescription>
+        <Card className="rounded-2xl shadow-sm">
+          <CardHeader className="p-6">
+            <CardDescription className="text-xs uppercase tracking-wide text-muted-foreground">
+              Total Land Area
+            </CardDescription>
+            <CardTitle className="text-2xl font-semibold">
+              {Math.round(totalLandArea * 100) / 100} acres
+            </CardTitle>
           </CardHeader>
         </Card>
 
-        <Card>
-          <CardHeader>
-            <CardTitle>
+        <Card className="rounded-2xl shadow-sm">
+          <CardHeader className="p-6">
+            <CardDescription className="text-xs uppercase tracking-wide text-muted-foreground">
+              Total Revenue
+            </CardDescription>
+            <CardTitle className="text-2xl font-semibold">
               ₹{totalRevenue.toLocaleString("en-IN")}
             </CardTitle>
-            <CardDescription>Total Revenue</CardDescription>
           </CardHeader>
         </Card>
 
-        <Card>
-          <CardHeader>
-            <CardTitle>
+        <Card className="rounded-2xl shadow-sm">
+          <CardHeader className="p-6">
+            <CardDescription className="text-xs uppercase tracking-wide text-muted-foreground">
+              Average Project Cost
+            </CardDescription>
+            <CardTitle className="text-2xl font-semibold">
               ₹{averageProjectCost.toLocaleString("en-IN")}
             </CardTitle>
-            <CardDescription>Average Project Cost</CardDescription>
           </CardHeader>
         </Card>
-
       </div>
 
-      <Card>
+      <Card className="rounded-2xl shadow-sm">
         <CardHeader>
-          <CardTitle>Revenue Trend</CardTitle>
+          <CardTitle className="text-xl font-semibold">Revenue Trend</CardTitle>
         </CardHeader>
-        <CardContent>
-          <ResponsiveContainer width="100%" height={250}>
-            <BarChart data={sitesSalesData}>
-              <CartesianGrid strokeDasharray="3 3" />
-              <XAxis dataKey="month" />
-              <YAxis />
-              <Tooltip />
-              <Legend />
-              <Bar dataKey="revenue" fill="#22c55e" />
-            </BarChart>
-          </ResponsiveContainer>
+        <CardContent className="p-6">
+          <div className="h-80">
+            <ResponsiveContainer width="100%" height="100%">
+              <BarChart data={sitesSalesData}>
+                <CartesianGrid strokeDasharray="3 3" />
+                <XAxis dataKey="month" />
+                <YAxis />
+                <Tooltip />
+                <Legend />
+                <Bar dataKey="revenue" fill="#22c55e" />
+              </BarChart>
+            </ResponsiveContainer>
+          </div>
         </CardContent>
       </Card>
 
-      <Card>
+      <Card className="rounded-2xl shadow-sm">
         <CardHeader>
-          <CardTitle>Current Work Sites</CardTitle>
+          <CardTitle className="text-xl font-semibold">Current Work Sites</CardTitle>
         </CardHeader>
-        <CardContent>
+        <CardContent className="p-6 space-y-3">
           {activeSitesList.length === 0 ? (
-            <p>No site evaluations yet.</p>
+            <p className="text-sm text-muted-foreground">No site evaluations yet.</p>
           ) : (
             activeSitesList.map((site, idx) => (
-              <div key={idx} className="flex justify-between p-2 border rounded">
+              <div
+                key={idx}
+                className="flex justify-between items-center rounded-xl border px-4 py-3"
+              >
                 <div>
-                  <p>{site.name}</p>
+                  <p className="text-sm font-medium">{site.name}</p>
                   <p className="text-xs text-muted-foreground">
                     {site.area} acres • {site.marked}
                   </p>
                 </div>
-                <span>{site.status}</span>
+                <span className="text-xs font-medium px-2 py-1 rounded-full bg-muted">
+                  {site.status}
+                </span>
               </div>
             ))
           )}
