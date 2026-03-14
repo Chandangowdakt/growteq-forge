@@ -14,6 +14,12 @@ export interface ISiteEvaluation extends Document {
   sunExposure: SunExposure
   status: SiteEvaluationStatus
   notes?: string
+  /** Optional; may be set from populated site or legacy data */
+  name?: string
+  area?: number
+  slope?: number
+  areaUnit?: string
+  infrastructureRecommendation?: string
   createdAt: Date
   updatedAt: Date
 }
@@ -30,6 +36,11 @@ const siteEvaluationSchema = new Schema<ISiteEvaluation>(
     sunExposure: { type: String, enum: ["full", "partial", "shade"], default: "full" },
     status: { type: String, enum: ["draft", "submitted", "approved", "rejected"], default: "draft" },
     notes: { type: String, trim: true },
+    name: { type: String, trim: true },
+    area: { type: Number, min: 0 },
+    slope: { type: Number, min: 0 },
+    areaUnit: { type: String, trim: true },
+    infrastructureRecommendation: { type: String, trim: true },
   },
   { timestamps: true }
 )

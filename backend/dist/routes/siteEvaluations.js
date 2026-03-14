@@ -1,0 +1,14 @@
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+const express_1 = require("express");
+const siteEvaluationController_1 = require("../controllers/siteEvaluationController");
+const auth_1 = require("../middleware/auth");
+const router = (0, express_1.Router)();
+router.use(auth_1.authMiddleware);
+router.get("/", siteEvaluationController_1.listSiteEvaluations);
+router.post("/", siteEvaluationController_1.createSiteEvaluation);
+router.get("/:id", siteEvaluationController_1.getSiteEvaluation);
+router.patch("/:id/status", siteEvaluationController_1.updateStatus);
+router.patch("/:id", siteEvaluationController_1.updateSiteEvaluation);
+router.delete("/:id", siteEvaluationController_1.deleteSiteEvaluation);
+exports.default = router;

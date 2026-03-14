@@ -100,7 +100,7 @@ router.get("/roi-distribution", async (_req, res, next) => {
         infrastructureType?: string
         investmentValue?: number
         roiMonths?: number
-        content?: { investment?: number; estimatedCost?: number; roiMonths?: number }
+        content?: { investment?: number; estimatedCost?: number; roiMonths?: number; infrastructureType?: string }
       }
       const type = (doc.infrastructureType ?? doc.content?.infrastructureType ?? "open_field").toString().toLowerCase().replace(/\s/g, "_")
       const inv = typeof doc.investmentValue === "number" ? doc.investmentValue : doc.content?.investment ?? doc.content?.estimatedCost ?? 0

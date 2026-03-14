@@ -39,7 +39,7 @@ const notificationSchema = new Schema<INotification>(
 )
 
 notificationSchema.set("toJSON", {
-  transform(_doc, ret: Record<string, unknown>) {
+  transform(_doc: mongoose.Document, ret: any) {
     ret.isNew = ret.newNotification
     delete ret.newNotification
     return ret

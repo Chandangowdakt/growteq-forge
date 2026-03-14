@@ -8,6 +8,7 @@ export interface IUser extends Document {
   password: string
   name: string
   role: Role
+  isActive?: boolean
   createdAt: Date
   updatedAt: Date
   comparePassword(candidate: string): Promise<boolean>
@@ -26,7 +27,8 @@ const userSchema = new Schema<IUser>(
 
 userSchema.pre("save", async function (next) {
   if (!this.isModified("password")) return next()
-  this.password = await bcrypt.hash(this.password, 12)
+  const self = this as IUser
+  self.password = await bcrypt.hash(self.password, 12)
   next()
 })
 
