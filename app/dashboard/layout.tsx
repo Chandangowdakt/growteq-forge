@@ -35,7 +35,7 @@ export default function DashboardLayoutWrapper({
 }) {
   const pathname = usePathname()
   const sidebarRef = useRef<HTMLDivElement>(null)
-  const { user: authUser } = useAuth()
+  const { user: authUser, logout } = useAuth()
 
   const [isMobileNavOpen, setIsMobileNavOpen] = useState(false)
   const [isExpanded, setIsExpanded] = useState(false)
@@ -115,17 +115,12 @@ export default function DashboardLayoutWrapper({
           <div className="flex flex-col flex-1 pt-5 bg-[#387F43] text-white">
             <div
               className={cn(
-                "flex items-center mb-5",
-                isExpanded ? "px-4" : "px-2 justify-center"
+                "flex flex-col items-center mb-5",
+                isExpanded ? "px-4" : "px-2"
               )}
             >
-              <SafeImage
-                src="/images/growteq-logo-white.svg"
-                alt="Growteq Logo"
-                width={150}
-                height={40}
-                fallback={<span>Growteq</span>}
-              />
+              <span className="text-xl font-bold text-white">growteq</span>
+              {isExpanded && <span className="text-xs text-white/80 mt-0.5">AGRI FARMS PVT LTD</span>}
             </div>
 
             <div
@@ -162,13 +157,14 @@ export default function DashboardLayoutWrapper({
             </div>
 
             <div className="p-3">
-              <Link
-                href="/logout"
-                className="flex items-center px-3 py-3 text-white hover:bg-[#2d6535] rounded-md"
+              <button
+                type="button"
+                onClick={logout}
+                className="flex items-center w-full px-3 py-3 text-white hover:bg-[#2d6535] rounded-md"
               >
-                <LogOut className="mr-3 h-5 w-5" />
+                <LogOut className="mr-3 h-5 w-5 flex-shrink-0" />
                 {isExpanded && "Sign Out"}
-              </Link>
+              </button>
             </div>
           </div>
         </div>
@@ -187,9 +183,13 @@ export default function DashboardLayoutWrapper({
 
             <div className="flex items-center ml-auto space-x-4">
               <UserProfile
-                name={authUser?.name ?? "User"}
+                name={
+                  authUser
+                    ? [authUser.firstName, authUser.lastName].filter(Boolean).join(" ") || authUser.name || "User"
+                    : "User"
+                }
                 email={authUser?.email ?? ""}
-                company="User"
+                company={authUser?.role ?? "User"}
               />
             </div>
           </div>

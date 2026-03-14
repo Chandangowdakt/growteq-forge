@@ -24,11 +24,11 @@ function formatNotification(n: ApiNotification): NotificationItem {
       name: n.user?.name ?? "System",
       avatar: n.user?.avatar ?? "",
     },
-    action: n.action,
-    content: n.content,
+    action: (n as { title?: string }).title ?? n.action,
+    content: (n as { message?: string }).message ?? n.content,
     timestamp: formatDistanceToNow(new Date(n.createdAt), { addSuffix: true }),
     isRead: n.isRead,
-    isNew: n.isNew,
+    isNew: n.isNew ?? !n.isRead,
   }
 }
 
@@ -52,18 +52,30 @@ interface NotificationsDrawerProps {
 export function NotificationsDrawer({ isOpen, onClose }: NotificationsDrawerProps) {
   const [notifications, setNotifications] = useState<NotificationItem[]>(fallbackNotifications)
   const [loading, setLoading] = useState(false)
+  const [unreadCount, setUnreadCount] = useState(0)
 
   const fetchNotifications = useCallback(async () => {
     setLoading(true)
     try {
       const res = await notificationsApi.list()
-      if (res.success && res.data.length > 0) {
-        setNotifications(res.data.map(formatNotification))
+      if (res.success && res.data) {
+        setNotifications(
+          res.data.length > 0 ? res.data.map(formatNotification) : []
+        )
       }
     } catch {
-      // Keep fallback when API unavailable or unauthenticated
+      setNotifications([])
     } finally {
       setLoading(false)
+    }
+  }, [])
+
+  const fetchUnreadCount = useCallback(async () => {
+    try {
+      const res = await notificationsApi.unreadCount()
+      if (res?.data?.count != null) setUnreadCount(res.data.count)
+    } catch {
+      setUnreadCount(0)
     }
   }, [])
 
@@ -71,19 +83,29 @@ export function NotificationsDrawer({ isOpen, onClose }: NotificationsDrawerProp
     if (isOpen) fetchNotifications()
   }, [isOpen, fetchNotifications])
 
+  useEffect(() => {
+    fetchUnreadCount()
+    const t = setInterval(fetchUnreadCount, 30000)
+    return () => clearInterval(t)
+  }, [fetchUnreadCount])
+
   const markAsRead = useCallback((notificationId: string) => {
     setNotifications((prev) =>
       prev.map((n) => (n.id === notificationId ? { ...n, isRead: true, isNew: false } : n))
     )
-    notificationsApi.markAsRead(notificationId).catch(() => {})
+    setUnreadCount((c) => Math.max(0, c - 1))
+    notificationsApi.markRead(notificationId).catch(() => {})
   }, [])
 
   const markAllAsRead = useCallback(() => {
     setNotifications((prev) => prev.map((n) => ({ ...n, isRead: true, isNew: false })))
-    notificationsApi.markAllAsRead().catch(() => {})
+    setUnreadCount(0)
+    notificationsApi.markAllRead().catch(() => {})
   }, [])
 
-  const unreadCount = notifications.filter((n) => !n.isRead).length
+  const displayUnreadCount = notifications.length > 0
+    ? notifications.filter((n) => !n.isRead).length
+    : unreadCount
 
   return (
     <>
@@ -98,14 +120,14 @@ export function NotificationsDrawer({ isOpen, onClose }: NotificationsDrawerProp
           <div className="flex items-center space-x-3">
             <div className="relative">
               <Bell className="h-5 w-5 text-[#3E2C80]" />
-              {unreadCount > 0 && (
+              {displayUnreadCount > 0 && (
                 <div className="absolute -top-1 -right-1 h-4 w-4 bg-red-500 rounded-full flex items-center justify-center">
-                  <span className="text-xs text-white font-medium">{unreadCount}</span>
+                  <span className="text-xs text-white font-medium">{displayUnreadCount}</span>
                 </div>
               )}
             </div>
             <h2 className="text-lg font-semibold text-gray-900">Notifications</h2>
-            {unreadCount > 0 && (
+            {displayUnreadCount > 0 && (
               <Button
                 variant="ghost"
                 size="sm"

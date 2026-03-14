@@ -5,6 +5,7 @@ import {
   getFarm,
   updateFarm,
   deleteFarm,
+  getFarmSites,
 } from "../controllers/farmController"
 import { authMiddleware } from "../middleware/auth"
 
@@ -14,8 +15,10 @@ router.use(authMiddleware)
 
 router.get("/", listFarms)
 router.post("/", createFarm)
-router.get("/:id", getFarm)
-router.patch("/:id", updateFarm)
-router.delete("/:id", deleteFarm)
+router.get("/:farmId/sites", getFarmSites)
+router.get("/:farmId", getFarm)
+router.put("/:farmId", updateFarm)
+router.patch("/:farmId", updateFarm)
+router.delete("/:farmId", deleteFarm)
 
 export default router

@@ -1,26 +1,38 @@
 import mongoose, { Document, Schema } from "mongoose"
 
+export type NotificationType = "info" | "success" | "warning" | "error"
+
 export interface INotification extends Document {
   userId: mongoose.Types.ObjectId
-  user?: { name: string; avatar?: string }
-  action: string
-  content: string
+  title: string
+  message: string
+  type: NotificationType
+  relatedEntityType?: string
+  relatedEntityId?: mongoose.Types.ObjectId
   isRead: boolean
-  newNotification: boolean // avoid Mongoose reserved key "isNew"
+  readAt?: Date
+  // Legacy fields for backward compatibility
+  user?: { name: string; avatar?: string }
+  action?: string
+  content?: string
+  newNotification?: boolean
   createdAt: Date
   updatedAt: Date
 }
 
-const notificationSchema = new Schema(
+const notificationSchema = new Schema<INotification>(
   {
     userId: { type: Schema.Types.ObjectId, ref: "User", required: true },
-    user: {
-      name: { type: String, default: "System" },
-      avatar: { type: String },
-    },
-    action: { type: String, required: true, trim: true },
-    content: { type: String, default: "" },
+    title: { type: String, default: "", trim: true },
+    message: { type: String, default: "", trim: true },
+    type: { type: String, enum: ["info", "success", "warning", "error"], default: "info" },
+    relatedEntityType: { type: String, trim: true },
+    relatedEntityId: { type: Schema.Types.ObjectId },
     isRead: { type: Boolean, default: false },
+    readAt: { type: Date },
+    user: { name: { type: String, default: "System" }, avatar: { type: String } },
+    action: { type: String, trim: true },
+    content: { type: String, default: "" },
     newNotification: { type: Boolean, default: true },
   },
   { timestamps: true }

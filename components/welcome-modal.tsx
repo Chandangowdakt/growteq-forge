@@ -15,7 +15,7 @@ export function WelcomeModal({ isOpen, onClose }: WelcomeModalProps) {
       title: "System Configuration",
       description: "Configure system management settings",
       completed: true,
-      href: "/dashboard/placeholder",
+      href: "/dashboard/overview",
     },
   ]
 

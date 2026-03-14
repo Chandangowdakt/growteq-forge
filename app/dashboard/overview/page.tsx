@@ -7,26 +7,16 @@ import { Button } from "@/components/ui/button"
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from "recharts"
 import { TrendingUp, MapPin, CheckCircle, Clock, AlertCircle } from "lucide-react"
 import { dashboardApi } from "@/lib/api"
+import { formatINR } from "@/lib/utils"
 import { formatDistanceToNow } from "date-fns"
 
 interface SummaryData {
-  activeSites: number
-  draftEvaluations: number
-  submitted: number
-  totalLandArea: number
-  evaluations: Array<{
-    _id: string
-    name: string
-    status: string
-    area: number
-    updatedAt: string
-  }>
-  totalRevenue: number
-  averageProjectCost: number
-  draftCount: number
-  submittedCount: number
-  totalFarms: number
-  monthlyRevenue: Array<{ month: string; total: number }>
+  totalSites: number
+  totalArea: number
+  totalProposals: number
+  pipelineValue: number
+  averageROI: number
+  revenueTrend: { month: string; value: number }[]
 }
 
 export default function OverviewPage() {
@@ -39,28 +29,25 @@ export default function OverviewPage() {
     setError(null)
 
     try {
-      const summary: any = await dashboardApi.summary()
+      // Initialize with safe defaults before loading real data
+      setData({
+        totalSites: 0,
+        totalArea: 0,
+        totalProposals: 0,
+        pipelineValue: 0,
+        averageROI: 0,
+        revenueTrend: [],
+      })
+
+      const { data: summary } = await dashboardApi.summary()
 
       setData({
-        activeSites: summary.activeSites ?? 0,
-        draftEvaluations: summary.draftEvaluations ?? 0,
-        submitted: summary.submitted ?? 0,
-        totalLandArea: summary.totalLandArea ?? 0,
-
-        evaluations: (summary.evaluations ?? []).map((e: any) => ({
-          _id: e._id,
-          name: e.name,
-          status: e.status,
-          area: e.area ?? 0,
-          updatedAt: e.updatedAt,
-        })),
-
-        totalRevenue: summary.totalRevenue ?? 0,
-        averageProjectCost: summary.averageProjectCost ?? 0,
-        draftCount: summary.draftCount ?? summary.draftEvaluations ?? 0,
-        submittedCount: summary.submittedCount ?? summary.submitted ?? 0,
-        totalFarms: summary.totalFarms ?? (summary.farms ? summary.farms.length : 0),
-        monthlyRevenue: summary.monthlyRevenue ?? [],
+        totalSites: summary.totalSites ?? 0,
+        totalArea: summary.totalArea ?? 0,
+        totalProposals: summary.totalProposals ?? 0,
+        pipelineValue: summary.pipelineValue ?? 0,
+        averageROI: summary.averageROI ?? 0,
+        revenueTrend: Array.isArray(summary.revenueTrend) ? summary.revenueTrend : [],
       })
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to load dashboard")
@@ -105,30 +92,13 @@ export default function OverviewPage() {
   if (!data) return null
 
   const {
-    activeSites,
-    totalLandArea,
-    evaluations,
-    totalRevenue,
-    averageProjectCost,
-    draftCount,
-    submittedCount,
-    monthlyRevenue,
+    totalSites,
+    totalArea,
+    totalProposals,
+    pipelineValue,
+    averageROI,
+    revenueTrend,
   } = data
-
-  const activeSitesList = evaluations.slice(0, 10).map((e) => ({
-    name: e.name,
-    status: e.status,
-    area: e.area,
-    marked: formatDistanceToNow(new Date(e.updatedAt), { addSuffix: true }),
-  }))
-
-  const sitesSalesData =
-    monthlyRevenue.length > 0
-      ? monthlyRevenue.map((m) => ({
-          month: m.month,
-          revenue: m.total,
-        }))
-      : []
 
   return (
     <div className="max-w-7xl mx-auto px-6 py-8 space-y-8">
@@ -138,37 +108,19 @@ export default function OverviewPage() {
         <Card className="rounded-2xl shadow-sm">
           <CardHeader className="p-6">
             <CardDescription className="text-xs uppercase tracking-wide text-muted-foreground">
-              Active Sites
+              Total Sites
             </CardDescription>
-            <CardTitle className="text-2xl font-semibold">{activeSites}</CardTitle>
+            <CardTitle className="text-2xl font-semibold">{totalSites}</CardTitle>
           </CardHeader>
         </Card>
 
         <Card className="rounded-2xl shadow-sm">
           <CardHeader className="p-6">
             <CardDescription className="text-xs uppercase tracking-wide text-muted-foreground">
-              Draft Evaluations
-            </CardDescription>
-            <CardTitle className="text-2xl font-semibold">{draftCount}</CardTitle>
-          </CardHeader>
-        </Card>
-
-        <Card className="rounded-2xl shadow-sm">
-          <CardHeader className="p-6">
-            <CardDescription className="text-xs uppercase tracking-wide text-muted-foreground">
-              Submitted
-            </CardDescription>
-            <CardTitle className="text-2xl font-semibold">{submittedCount}</CardTitle>
-          </CardHeader>
-        </Card>
-
-        <Card className="rounded-2xl shadow-sm">
-          <CardHeader className="p-6">
-            <CardDescription className="text-xs uppercase tracking-wide text-muted-foreground">
-              Total Land Area
+              Total Area (acres)
             </CardDescription>
             <CardTitle className="text-2xl font-semibold">
-              {Math.round(totalLandArea * 100) / 100} acres
+              {Math.round(totalArea * 100) / 100}
             </CardTitle>
           </CardHeader>
         </Card>
@@ -176,10 +128,19 @@ export default function OverviewPage() {
         <Card className="rounded-2xl shadow-sm">
           <CardHeader className="p-6">
             <CardDescription className="text-xs uppercase tracking-wide text-muted-foreground">
-              Total Revenue
+              Total Proposals
+            </CardDescription>
+            <CardTitle className="text-2xl font-semibold">{totalProposals}</CardTitle>
+          </CardHeader>
+        </Card>
+
+        <Card className="rounded-2xl shadow-sm">
+          <CardHeader className="p-6">
+            <CardDescription className="text-xs uppercase tracking-wide text-muted-foreground">
+              Pipeline Value (₹)
             </CardDescription>
             <CardTitle className="text-2xl font-semibold">
-              ₹{totalRevenue.toLocaleString("en-IN")}
+              {formatINR(pipelineValue)}
             </CardTitle>
           </CardHeader>
         </Card>
@@ -187,10 +148,21 @@ export default function OverviewPage() {
         <Card className="rounded-2xl shadow-sm">
           <CardHeader className="p-6">
             <CardDescription className="text-xs uppercase tracking-wide text-muted-foreground">
-              Average Project Cost
+              Average ROI (months)
             </CardDescription>
             <CardTitle className="text-2xl font-semibold">
-              ₹{averageProjectCost.toLocaleString("en-IN")}
+              {averageROI.toLocaleString("en-IN", { maximumFractionDigits: 1 })}
+            </CardTitle>
+          </CardHeader>
+        </Card>
+
+        <Card className="rounded-2xl shadow-sm">
+          <CardHeader className="p-6">
+            <CardDescription className="text-xs uppercase tracking-wide text-muted-foreground">
+              Proposals in Pipeline
+            </CardDescription>
+            <CardTitle className="text-2xl font-semibold">
+              {totalProposals}
             </CardTitle>
           </CardHeader>
         </Card>
@@ -199,47 +171,25 @@ export default function OverviewPage() {
       <Card className="rounded-2xl shadow-sm">
         <CardHeader>
           <CardTitle className="text-xl font-semibold">Revenue Trend</CardTitle>
+          <CardDescription>Proposal investment value by month (last 6 months)</CardDescription>
         </CardHeader>
         <CardContent className="p-6">
-          <div className="h-80">
-            <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={sitesSalesData}>
-                <CartesianGrid strokeDasharray="3 3" />
-                <XAxis dataKey="month" />
-                <YAxis />
-                <Tooltip />
-                <Legend />
-                <Bar dataKey="revenue" fill="#22c55e" />
-              </BarChart>
-            </ResponsiveContainer>
-          </div>
-        </CardContent>
-      </Card>
-
-      <Card className="rounded-2xl shadow-sm">
-        <CardHeader>
-          <CardTitle className="text-xl font-semibold">Current Work Sites</CardTitle>
-        </CardHeader>
-        <CardContent className="p-6 space-y-3">
-          {activeSitesList.length === 0 ? (
-            <p className="text-sm text-muted-foreground">No site evaluations yet.</p>
+          {revenueTrend.length > 0 ? (
+            <div className="h-80">
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart data={revenueTrend}>
+                  <CartesianGrid strokeDasharray="3 3" />
+                  <XAxis dataKey="month" />
+                  <YAxis />
+                  <Tooltip formatter={(value: number) => [`₹${Number(value).toLocaleString("en-IN")}`, "Value"]} />
+                  <Bar dataKey="value" fill="#387F43" name="Investment (₹)" />
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
           ) : (
-            activeSitesList.map((site, idx) => (
-              <div
-                key={idx}
-                className="flex justify-between items-center rounded-xl border px-4 py-3"
-              >
-                <div>
-                  <p className="text-sm font-medium">{site.name}</p>
-                  <p className="text-xs text-muted-foreground">
-                    {site.area} acres • {site.marked}
-                  </p>
-                </div>
-                <span className="text-xs font-medium px-2 py-1 rounded-full bg-muted">
-                  {site.status}
-                </span>
-              </div>
-            ))
+            <div className="h-80 flex items-center justify-center text-sm text-muted-foreground">
+              No revenue trend data yet.
+            </div>
           )}
         </CardContent>
       </Card>

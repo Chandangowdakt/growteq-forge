@@ -15,7 +15,7 @@ import {
   SelectValue,
 } from "@/components/ui/select"
 import { Label } from "@/components/ui/label"
-import { siteEvaluationsApi, type SiteEvaluation } from "@/lib/api"
+import { api, siteEvaluationsApi, type SiteEvaluation } from "@/lib/api"
 import { ArrowLeft, AlertCircle, FileDown } from "lucide-react"
 
 const COST_PER_ACRE: Record<string, number> = {
@@ -43,6 +43,19 @@ export default function SiteEvaluationDetailPage() {
   const [costEstimate, setCostEstimate] = useState<number | undefined>(undefined)
   const [saving, setSaving] = useState(false)
   const [downloadingPdf, setDownloadingPdf] = useState(false)
+  const [recommendationLoading, setRecommendationLoading] = useState(false)
+  const [recommendationError, setRecommendationError] = useState<string | null>(null)
+  const [recommendedType, setRecommendedType] = useState<string | null>(null)
+  const [feasibilityScore, setFeasibilityScore] = useState<number | null>(null)
+  const [costLoading, setCostLoading] = useState(false)
+  const [costError, setCostError] = useState<string | null>(null)
+  const [backendCost, setBackendCost] = useState<{
+    infrastructureType: string
+    costPerAcre: number
+    finalInvestment: number
+    annualProfit: number
+    roiMonths: number
+  } | null>(null)
 
   const load = useCallback(async () => {
     if (!id) return
@@ -52,11 +65,26 @@ export default function SiteEvaluationDetailPage() {
       const res = await siteEvaluationsApi.get(id)
       if (res.success && res.data) {
         const e = res.data
+        const proposal = (e as { proposal?: { infrastructureType?: string; investmentValue?: number } }).proposal
+        const siteRef = typeof e.siteId === "object" && e.siteId && "area" in e.siteId ? e.siteId : null
+        const area = (siteRef as { area?: number })?.area ?? (e as { area?: number }).area ?? 0
         setEvaluation(e)
-        setSlope(e.slope != null ? String(e.slope) : "")
-        setInfrastructureRecommendation(e.infrastructureRecommendation ?? "")
+        setSlope(
+          (e as { slopePercentage?: number }).slopePercentage != null
+            ? String((e as { slopePercentage: number }).slopePercentage)
+            : (e as { slope?: number }).slope != null
+              ? String((e as { slope: number }).slope)
+              : ""
+        )
+        setInfrastructureRecommendation(
+          (e as { infrastructureRecommendation?: string }).infrastructureRecommendation ??
+          proposal?.infrastructureType ??
+          ""
+        )
         setCostEstimate(
-          e.costEstimate ?? computeCost(e.area, e.infrastructureRecommendation)
+          (e as { costEstimate?: number }).costEstimate ??
+          proposal?.investmentValue ??
+          (area ? computeCost(area, (e as { infrastructureRecommendation?: string }).infrastructureRecommendation ?? proposal?.infrastructureType) : undefined)
         )
       }
     } catch (e) {
@@ -72,12 +100,97 @@ export default function SiteEvaluationDetailPage() {
 
   useEffect(() => {
     if (evaluation == null) return
-    const cost = computeCost(
-      evaluation.area,
-      infrastructureRecommendation || undefined
-    )
+    const siteRef = typeof evaluation.siteId === "object" && evaluation.siteId && "area" in evaluation.siteId ? evaluation.siteId : null
+    const area = (siteRef as { area?: number })?.area ?? (evaluation as { area?: number }).area ?? 0
+    const cost = computeCost(area, infrastructureRecommendation || undefined)
     setCostEstimate(cost)
   }, [evaluation, infrastructureRecommendation])
+
+  useEffect(() => {
+    if (!id) return
+
+    let cancelled = false
+
+    async function loadRecommendationAndCost() {
+      try {
+        setRecommendationLoading(true)
+        setRecommendationError(null)
+
+        const recRes = await api.post<{
+          success: boolean
+          data: {
+            siteId: string
+            area: number
+            slope: number
+            infrastructureType: string
+            estimatedCost: number
+            roiMonths: number
+            feasibilityScore: number
+          }
+        }>("/api/proposals/recommend", { siteId: id })
+
+        if (!cancelled && recRes.data?.success && recRes.data.data) {
+          const rec = recRes.data.data
+          setRecommendedType(rec.infrastructureType)
+          setFeasibilityScore(rec.feasibilityScore)
+        }
+      } catch (err) {
+        if (!cancelled) {
+          setRecommendationError(
+            err instanceof Error ? err.message : "Failed to load recommendation"
+          )
+        }
+      } finally {
+        if (!cancelled) {
+          setRecommendationLoading(false)
+        }
+      }
+
+      try {
+        setCostLoading(true)
+        setCostError(null)
+
+        const costRes = await api.get<{
+          success: boolean
+          data: {
+            siteId: string
+            infrastructureType: string
+            area: number
+            costPerAcre: number
+            investment: number
+            finalInvestment: number
+            annualProfit: number
+            roiMonths: number
+          }
+        }>(`/api/cost/${id}`)
+
+        if (!cancelled && costRes.data?.success && costRes.data.data) {
+          const c = costRes.data.data
+          setBackendCost({
+            infrastructureType: c.infrastructureType,
+            costPerAcre: c.costPerAcre,
+            finalInvestment: c.finalInvestment,
+            annualProfit: c.annualProfit,
+            roiMonths: c.roiMonths,
+          })
+        }
+      } catch (err) {
+        if (!cancelled) {
+          setCostError(err instanceof Error ? err.message : "Failed to load cost details")
+        }
+      } finally {
+        if (!cancelled) {
+          setCostLoading(false)
+        }
+      }
+    }
+
+    void loadRecommendationAndCost()
+
+    return () => {
+      cancelled = true
+    }
+  }, [id])
 
   const handleSaveDraft = async () => {
     if (!id || evaluation == null) return
@@ -277,6 +390,39 @@ export default function SiteEvaluationDetailPage() {
                 ? `₹${costEstimate.toLocaleString()}`
                 : "—"}
             </p>
+            {recommendationLoading && (
+              <p className="text-xs text-muted-foreground">Loading recommendation…</p>
+            )}
+            {!recommendationLoading && recommendationError && (
+              <p className="text-xs text-red-600">
+                Failed to load recommendation: {recommendationError}
+              </p>
+            )}
+            {!recommendationLoading && !recommendationError && recommendedType && (
+              <p className="text-xs text-muted-foreground">
+                Recommended: <span className="font-medium">{recommendedType}</span>
+                {feasibilityScore != null && (
+                  <> • Feasibility score: {feasibilityScore.toFixed(1)}%</>
+                )}
+              </p>
+            )}
+            {!costLoading && backendCost && (
+              <p className="text-xs text-muted-foreground">
+                Backend cost: {backendCost.infrastructureType} • ₹
+                {backendCost.costPerAcre.toLocaleString("en-IN")} /acre • Final: ₹
+                {backendCost.finalInvestment.toLocaleString("en-IN")} • Annual profit: ₹
+                {backendCost.annualProfit.toLocaleString("en-IN")} • ROI:{" "}
+                {backendCost.roiMonths.toFixed(1)} months
+              </p>
+            )}
+            {costLoading && (
+              <p className="text-xs text-muted-foreground">Loading cost details…</p>
+            )}
+            {!costLoading && costError && (
+              <p className="text-xs text-red-600">
+                Failed to load cost details: {costError}
+              </p>
+            )}
           </div>
 
           <div className="flex flex-wrap gap-2 pt-2">

@@ -23,8 +23,10 @@ interface CreateFarmModalProps {
 
 export function CreateFarmModal({ open, onOpenChange, onSuccess }: CreateFarmModalProps) {
   const [name, setName] = useState("")
-  const [description, setDescription] = useState("")
   const [location, setLocation] = useState("")
+  const [country, setCountry] = useState("")
+  const [state, setState] = useState("")
+  const [district, setDistrict] = useState("")
   const [submitting, setSubmitting] = useState(false)
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -34,15 +36,19 @@ export function CreateFarmModal({ open, onOpenChange, onSuccess }: CreateFarmMod
     try {
       const res = await farmsApi.create({
         name: name.trim(),
-        description: description.trim() || undefined,
         location: location.trim() || undefined,
+        country: country.trim() || undefined,
+        state: state.trim() || undefined,
+        district: district.trim() || undefined,
       })
       if (res.success && res.data) {
         toast({ title: "Farm created", description: res.data.name })
         onSuccess(res.data)
         setName("")
-        setDescription("")
         setLocation("")
+        setCountry("")
+        setState("")
+        setDistrict("")
         onOpenChange(false)
       }
     } catch {
@@ -76,21 +82,39 @@ export function CreateFarmModal({ open, onOpenChange, onSuccess }: CreateFarmMod
               />
             </div>
             <div className="grid gap-2">
-              <Label htmlFor="farm-desc">Description (optional)</Label>
-              <Input
-                id="farm-desc"
-                value={description}
-                onChange={(e) => setDescription(e.target.value)}
-                placeholder="Description"
-              />
-            </div>
-            <div className="grid gap-2">
               <Label htmlFor="farm-location">Location (optional)</Label>
               <Input
                 id="farm-location"
                 value={location}
                 onChange={(e) => setLocation(e.target.value)}
                 placeholder="Location"
+              />
+            </div>
+            <div className="grid gap-2">
+              <Label htmlFor="farm-country">Country (optional)</Label>
+              <Input
+                id="farm-country"
+                value={country}
+                onChange={(e) => setCountry(e.target.value)}
+                placeholder="Country"
+              />
+            </div>
+            <div className="grid gap-2">
+              <Label htmlFor="farm-state">State (optional)</Label>
+              <Input
+                id="farm-state"
+                value={state}
+                onChange={(e) => setState(e.target.value)}
+                placeholder="State"
+              />
+            </div>
+            <div className="grid gap-2">
+              <Label htmlFor="farm-district">District (optional)</Label>
+              <Input
+                id="farm-district"
+                value={district}
+                onChange={(e) => setDistrict(e.target.value)}
+                placeholder="District"
               />
             </div>
           </div>

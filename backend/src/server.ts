@@ -10,6 +10,13 @@ import siteEvaluationsRoutes from "./routes/siteEvaluations"
 import proposalsRoutes from "./routes/proposals"
 import notificationsRoutes from "./routes/notifications"
 import dashboardRoutes from "./routes/dashboard"
+import sitesRoutes from "./routes/sites"
+import mapsRoutes from "./routes/maps"
+import reportsRoutes from "./routes/reports"
+import costRoutes from "./routes/cost"
+import financeRoutes from "./routes/finance"
+import insightsRoutes from "./routes/insights"
+import settingsRoutes from "./routes/settings"
 
 if (!process.env.JWT_SECRET) {
   console.error("[Startup Error] JWT_SECRET is not defined.")
@@ -24,15 +31,11 @@ if (!process.env.MONGODB_URI) {
 const app = express()
 
 const PORT = Number(process.env.PORT || 5000)
-const corsOrigin = process.env.FRONTEND_ORIGIN
-
-if (!corsOrigin) {
-  console.warn("[Startup Warning] FRONTEND_ORIGIN not set. CORS may block requests.")
-}
+const frontendUrl = process.env.FRONTEND_URL || process.env.FRONTEND_ORIGIN || "http://localhost:3000"
 
 app.use(
   cors({
-    origin: corsOrigin,
+    origin: [frontendUrl, "http://localhost:3000"],
     credentials: true,
     methods: ["GET", "POST", "PATCH", "PUT", "DELETE", "OPTIONS"],
     allowedHeaders: ["Content-Type", "Authorization"],
@@ -58,9 +61,16 @@ app.get("/health", (_req, res) => {
 app.use("/api/auth", authRoutes)
 app.use("/api/farms", farmsRoutes)
 app.use("/api/site-evaluations", siteEvaluationsRoutes)
+app.use("/api/sites", sitesRoutes)
 app.use("/api/proposals", proposalsRoutes)
 app.use("/api/notifications", notificationsRoutes)
 app.use("/api/dashboard", dashboardRoutes)
+app.use("/api/maps", mapsRoutes)
+app.use("/api/reports", reportsRoutes)
+app.use("/api/cost", costRoutes)
+app.use("/api/finance", financeRoutes)
+app.use("/api/insights", insightsRoutes)
+app.use("/api/settings", settingsRoutes)
 
 app.use(errorHandler)
 

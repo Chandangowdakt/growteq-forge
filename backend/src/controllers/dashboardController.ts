@@ -1,83 +1,129 @@
-import mongoose from "mongoose"
 import { Response } from "express"
-import { Farm } from "../models/Farm"
+import { Site } from "../models/Site"
+import { Proposal } from "../models/Proposal"
 import { SiteEvaluation } from "../models/SiteEvaluation"
 import { asyncHandler } from "../utils/asyncHandler"
 import { AuthenticatedRequest } from "../middleware/auth"
 
-export const getSummary = asyncHandler(async (req: AuthenticatedRequest, res: Response) => {
+const COMPLETION_PCT: Record<string, number> = { draft: 30, submitted: 60, approved: 100, rejected: 0 }
+function completionPercent(status: string): number {
+  return COMPLETION_PCT[status] ?? 30
+}
+
+export const getWorkInProgress = asyncHandler(async (req: AuthenticatedRequest, res: Response) => {
   const userId = req.auth!.userId
-  const userIdObj = new mongoose.Types.ObjectId(userId)
+  const evaluations = await SiteEvaluation.find({ userId })
+    .populate("farmId", "name")
+    .populate("siteId", "name area geojson")
+    .sort({ updatedAt: -1 })
+    .lean()
 
-  const [farms, evaluations, aggResult] = await Promise.all([
-    Farm.find({ userId }).sort({ createdAt: -1 }),
-    SiteEvaluation.find({ userId }).sort({ updatedAt: -1 }),
-    SiteEvaluation.aggregate([
-      { $match: { userId: userIdObj } },
-      {
-        $facet: {
-          revenueStats: [
-            { $match: { status: "submitted" } },
-            {
-              $group: {
-                _id: null,
-                totalRevenue: { $sum: { $ifNull: ["$costEstimate", 0] } },
-                count: { $sum: 1 },
-              },
-            },
-          ],
-          draftCount: [
-            { $match: { status: "draft" } },
-            { $count: "count" },
-          ],
-          submittedCount: [
-            { $match: { status: "submitted" } },
-            { $count: "count" },
-          ],
-          monthlyRevenue: [
-            { $match: { status: "submitted" } },
-            {
-              $group: {
-                _id: { $dateToString: { format: "%Y-%m", date: "$updatedAt" } },
-                total: { $sum: { $ifNull: ["$costEstimate", 0] } },
-              },
-            },
-            { $sort: { _id: 1 } },
-          ],
-        },
-      },
-    ]),
-  ])
-
-  const draftCount = aggResult[0]?.draftCount?.[0]?.count ?? 0
-  const submittedCount = aggResult[0]?.submittedCount?.[0]?.count ?? 0
-  const totalRevenue = aggResult[0]?.revenueStats?.[0]?.totalRevenue ?? 0
-  const monthlyRevenue = (aggResult[0]?.monthlyRevenue ?? []).map(
-    (r: { _id: string; total: number }) => ({ month: r._id, total: r.total })
+  const evalIds = evaluations.map((e) => e._id)
+  const proposals = await Proposal.find({ siteEvaluationId: { $in: evalIds } })
+    .select("siteEvaluationId")
+    .lean()
+  const proposalByEval = new Map(
+    proposals.map((p) => [String((p as { siteEvaluationId: unknown }).siteEvaluationId), String((p as { _id: unknown })._id)])
   )
 
-  const draftEvaluations = evaluations.filter((e) => e.status === "draft").length
-  const submitted = evaluations.filter((e) => e.status === "submitted").length
-  const totalLandArea = evaluations.reduce((sum, e) => sum + (e.area ?? 0), 0)
+  const data = evaluations.map((e) => {
+    const farm = e.farmId as { name?: string } | null
+    const site = e.siteId as { name?: string; area?: number; geojson?: { coordinates?: unknown[] } } | null
+    let boundaryPointCount = 0
+    if (site?.geojson && Array.isArray((site.geojson as { coordinates?: unknown[] }).coordinates?.[0])) {
+      boundaryPointCount = (site.geojson as { coordinates: unknown[][] }).coordinates[0].length
+    }
+    return {
+      _id: e._id,
+      farmName: farm?.name ?? "Farm",
+      siteName: site?.name ?? "Site",
+      area: site?.area ?? 0,
+      status: e.status,
+      createdAt: e.createdAt,
+      updatedAt: e.updatedAt,
+      boundaryPointCount,
+      boundaryPoints: boundaryPointCount,
+      completionPercentage: completionPercent(e.status),
+      proposalId: proposalByEval.get(String(e._id)) ?? null,
+    }
+  })
 
-  const averageProjectCost =
-    submittedCount > 0 ? Math.round(totalRevenue / submittedCount) : 0
+  res.json({ success: true, data })
+})
+
+export const getSummary = asyncHandler(async (req: AuthenticatedRequest, res: Response) => {
+  const userId = req.auth!.userId
+
+  const sixMonthsAgo = new Date()
+  sixMonthsAgo.setMonth(sixMonthsAgo.getMonth() - 6)
+
+  const [totalSites, sitesAreaResult, totalProposals, pipelineResult, avgRoiResult, revenueTrendResult] =
+    await Promise.all([
+      Site.countDocuments(),
+      Site.aggregate([{ $group: { _id: null, total: { $sum: "$area" } } }]),
+      Proposal.countDocuments(),
+      Proposal.aggregate([
+        { $match: { status: { $ne: "rejected" } } },
+        {
+          $addFields: {
+            inv: {
+              $ifNull: [
+                "$investmentValue",
+                { $ifNull: ["$content.investment", { $ifNull: ["$content.estimatedCost", 0] }] },
+              ],
+            },
+          },
+        },
+        { $group: { _id: null, total: { $sum: "$inv" } } },
+      ]),
+      Proposal.aggregate([
+        {
+          $addFields: {
+            roi: { $ifNull: ["$roiMonths", "$content.roiMonths"] },
+          },
+        },
+        { $match: { roi: { $exists: true, $ne: null, $gte: 0 } } },
+        { $group: { _id: null, avg: { $avg: "$roi" } } },
+      ]),
+      Proposal.aggregate([
+        { $match: { createdAt: { $gte: sixMonthsAgo } } },
+        {
+          $addFields: {
+            inv: {
+              $ifNull: [
+                "$investmentValue",
+                { $ifNull: ["$content.investment", { $ifNull: ["$content.estimatedCost", 0] }] },
+              ],
+            },
+          },
+        },
+        {
+          $group: {
+            _id: { $dateToString: { format: "%Y-%m", date: "$createdAt" } },
+            value: { $sum: "$inv" },
+          },
+        },
+        { $sort: { _id: 1 } },
+        { $project: { month: "$_id", value: 1, _id: 0 } },
+      ]),
+    ])
+
+  const totalArea = sitesAreaResult[0]?.total ?? 0
+  const pipelineValue = pipelineResult[0]?.total ?? 0
+  const averageROI = avgRoiResult[0]?.avg ?? 0
+  const revenueTrend = (revenueTrendResult ?? []).map(
+    (r: { month: string; value: number }) => ({ month: r.month, value: r.value })
+  )
 
   res.json({
     success: true,
     data: {
-      activeSites: evaluations.length,
-      draftEvaluations,
-      submitted,
-      totalLandArea,
-      farms,
-      evaluations,
-      totalRevenue,
-      draftCount,
-      submittedCount,
-      totalFarms: farms.length,
-      averageProjectCost,
-      monthlyRevenue,
+      totalSites,
+      totalArea,
+      totalProposals,
+      pipelineValue,
+      averageROI: Math.round(averageROI * 10) / 10,
+      revenueTrend,
     },
   })
 })

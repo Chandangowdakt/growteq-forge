@@ -4,6 +4,7 @@ import {
   createSiteEvaluation,
   getSiteEvaluation,
   updateSiteEvaluation,
+  updateStatus,
   deleteSiteEvaluation,
 } from "../controllers/siteEvaluationController"
 import { authMiddleware } from "../middleware/auth"
@@ -15,6 +16,7 @@ router.use(authMiddleware)
 router.get("/", listSiteEvaluations)
 router.post("/", createSiteEvaluation)
 router.get("/:id", getSiteEvaluation)
+router.patch("/:id/status", updateStatus)
 router.patch("/:id", updateSiteEvaluation)
 router.delete("/:id", deleteSiteEvaluation)
 

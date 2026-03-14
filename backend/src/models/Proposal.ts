@@ -1,22 +1,30 @@
 import mongoose, { Document, Schema } from "mongoose"
 
 export interface IProposal extends Document {
-  title: string
-  siteEvaluationId: mongoose.Types.ObjectId
+  title?: string
+  siteId?: mongoose.Types.ObjectId
+  siteEvaluationId?: mongoose.Types.ObjectId
   userId: mongoose.Types.ObjectId
-  content: Record<string, unknown> // flexible proposal data (sections, totals, etc.)
-  status: "draft" | "sent"
+  content: Record<string, unknown>
+  status: "draft" | "sent" | "recommended" | "rejected"
+  investmentValue?: number
+  roiMonths?: number
+  infrastructureType?: string
   createdAt: Date
   updatedAt: Date
 }
 
 const proposalSchema = new Schema<IProposal>(
   {
-    title: { type: String, required: true, trim: true },
-    siteEvaluationId: { type: Schema.Types.ObjectId, ref: "SiteEvaluation", required: true },
+    title: { type: String, trim: true },
+    siteId: { type: Schema.Types.ObjectId, ref: "Site" },
+    siteEvaluationId: { type: Schema.Types.ObjectId, ref: "SiteEvaluation" },
     userId: { type: Schema.Types.ObjectId, ref: "User", required: true },
     content: { type: Schema.Types.Mixed, default: {} },
-    status: { type: String, enum: ["draft", "sent"], default: "draft" },
+    status: { type: String, enum: ["draft", "sent", "recommended", "rejected"], default: "draft" },
+    investmentValue: { type: Number, min: 0 },
+    roiMonths: { type: Number, min: 0 },
+    infrastructureType: { type: String, trim: true },
   },
   { timestamps: true }
 )

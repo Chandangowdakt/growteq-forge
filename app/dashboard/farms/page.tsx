@@ -14,10 +14,12 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 import { MapPin, CheckCircle, Clock, AlertCircle } from 'lucide-react'
-import { siteEvaluationsApi, farmsApi, type SiteEvaluation, type Farm } from '@/lib/api'
+import { siteEvaluationsApi, farmsApi, reportsApi, type SiteEvaluation, type Farm } from '@/lib/api'
+import { formatINR } from '@/lib/utils'
 import { formatDistanceToNow } from 'date-fns'
 import { toast } from '@/hooks/use-toast'
 import { CreateFarmModal } from './CreateFarmModal'
+import { lineString, length as turfLength } from '@turf/turf'
 
 type BoundaryPoint = { lat: number; lng: number; id: string }
 
@@ -31,6 +33,11 @@ interface LeafletMapProps {
 // @ts-ignore dynamic import typed via LeafletMapProps
 const LeafletMap = dynamic<LeafletMapProps>(() => import('./LeafletMap'), {
   ssr: false,
+  loading: () => (
+    <div className="h-full min-h-[18rem] bg-gray-100 animate-pulse flex items-center justify-center rounded-lg">
+      <span className="text-sm text-muted-foreground">Loading map…</span>
+    </div>
+  ),
 })
 
 interface ActiveSite {
@@ -39,15 +46,18 @@ interface ActiveSite {
   status: string
   lastMarked: string
   area: number
+  boundary: BoundaryPoint[]
 }
 
 function toActiveSite(e: SiteEvaluation): ActiveSite {
+  const siteRef = typeof e.siteId === 'object' && e.siteId && 'name' in e.siteId ? e.siteId : null
   return {
     id: e._id,
-    name: e.name,
+    name: (siteRef as { name?: string })?.name ?? (e as { name?: string }).name ?? 'Site',
     status: e.status,
     lastMarked: formatDistanceToNow(new Date(e.updatedAt), { addSuffix: true }),
-    area: e.area,
+    area: typeof (siteRef as { area?: number })?.area === 'number' ? (siteRef as { area: number }).area : (e as { area?: number }).area ?? 0,
+    boundary: (e.boundary as unknown as BoundaryPoint[]) ?? [],
   }
 }
 
@@ -63,18 +73,41 @@ export default function FarmsPage() {
   const [boundaryPoints, setBoundaryPoints] = useState<BoundaryPoint[]>([])
   const [calculatedArea, setCalculatedArea] = useState(0)
   const [savingSite, setSavingSite] = useState(false)
+  const [editingSiteId, setEditingSiteId] = useState<string | null>(null)
+  const [perimeter, setPerimeter] = useState(0)
+  const [lastRecommendation, setLastRecommendation] = useState<{
+    infrastructureType: string
+    investmentValue: number
+    roiMonths: number
+  } | null>(null)
+  const [lastRecommendationSiteId, setLastRecommendationSiteId] = useState<string | null>(null)
+  const [generatingReport, setGeneratingReport] = useState(false)
 
   const fetchFarms = useCallback(async () => {
     setFarmsLoading(true)
     try {
       const res = await farmsApi.list()
-      if (res.success) setFarms(res.data)
+      if (res.success && res.data) setFarms(res.data)
     } catch {
       setFarms([])
     } finally {
       setFarmsLoading(false)
     }
   }, [])
+
+  const handleDeleteFarm = useCallback(
+    async (farmId: string, farmName: string) => {
+      if (typeof window !== "undefined" && !window.confirm(`Delete farm "${farmName}"? This will soft-delete the farm.`)) return
+      try {
+        await farmsApi.remove(farmId)
+        toast({ title: "Farm deleted" })
+        fetchFarms()
+      } catch {
+        toast({ title: "Failed to delete farm", variant: "destructive" })
+      }
+    },
+    [fetchFarms]
+  )
 
   useEffect(() => {
     fetchFarms()
@@ -83,8 +116,10 @@ export default function FarmsPage() {
   const fetchSites = useCallback(async () => {
     setLoading(true)
     try {
-      const res = await siteEvaluationsApi.list(selectedFarmId ?? undefined)
-      if (res.success) setActiveSites(res.data.map(toActiveSite))
+      const res = await siteEvaluationsApi.list(
+        selectedFarmId ? { farmId: selectedFarmId } : undefined
+      )
+      if (res.success && res.data) setActiveSites(res.data.map(toActiveSite))
     } catch {
       setActiveSites([])
     } finally {
@@ -96,8 +131,24 @@ export default function FarmsPage() {
     fetchSites()
   }, [fetchSites])
 
+  const computePerimeter = (points: BoundaryPoint[]): number => {
+    if (points.length < 2) return 0
+    const coords = points.map((p) => [p.lng, p.lat])
+    coords.push(coords[0])
+    return Number((turfLength(lineString(coords), { units: 'kilometers' }) * 1000).toFixed(2))
+  }
+
   const handleSaveSite = async () => {
-    if (!siteName.trim() || !selectedFarmId || boundaryPoints.length < 3 || !calculatedArea) {
+    if (boundaryPoints.length < 3) {
+      toast({
+        title: 'Cannot save site',
+        description: 'Draw at least 3 boundary points before saving.',
+        variant: 'destructive',
+      })
+      return
+    }
+
+    if (!siteName.trim() || !calculatedArea) {
       return
     }
 
@@ -107,17 +158,31 @@ export default function FarmsPage() {
     setSavingSite(true)
 
     try {
-      const payload = {
-        name: siteName.trim(),
-        area: calculatedArea,
-        areaUnit: 'acres',
-        boundary: boundaryPoints,
-        status: 'draft',
-        farmId: selectedFarmId,
+      const coords = boundaryPoints.map((p) => [p.lng, p.lat])
+      if (coords.length > 0) {
+        coords.push(coords[0])
       }
 
-      const res = await fetch(`${baseURL}/api/site-evaluations`, {
-        method: 'POST',
+      const slope = 2.5
+      const payload = {
+        name: siteName.trim(),
+        geojson: {
+          type: 'Polygon' as const,
+          coordinates: [coords],
+        },
+        area: calculatedArea,
+        perimeter,
+        slope,
+        ...(selectedFarmId ? { farmId: selectedFarmId } : {}),
+      }
+
+      const url = editingSiteId
+        ? `${baseURL}/api/sites/${editingSiteId}`
+        : `${baseURL}/api/sites`
+      const method = editingSiteId ? 'PUT' : 'POST'
+
+      const res = await fetch(url, {
+        method,
         headers: {
           'Content-Type': 'application/json',
           ...(token ? { Authorization: `Bearer ${token}` } : {}),
@@ -127,15 +192,56 @@ export default function FarmsPage() {
 
       if (!res.ok) throw new Error('Failed to save site')
 
+      const siteJson = await res.json()
+      const createdSiteId = siteJson?.data?._id ?? siteJson?.data?.id
+
       toast({
-        title: 'Site saved',
-        description: 'Site evaluation created successfully.',
+        title: editingSiteId ? 'Site updated' : 'Site saved. Calculating recommendations…',
       })
 
+      setEditingSiteId(null)
       setSiteName('')
       setBoundaryPoints([])
       setCalculatedArea(0)
+      setPerimeter(0)
+      setLastRecommendation(null)
+      setLastRecommendationSiteId(null)
       fetchSites()
+
+      if (!editingSiteId && createdSiteId && calculatedArea) {
+        try {
+          const recRes = await fetch(`${baseURL}/api/proposals/recommend`, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              ...(token ? { Authorization: `Bearer ${token}` } : {}),
+            },
+            body: JSON.stringify({
+              siteId: createdSiteId,
+              area: calculatedArea,
+              slope,
+            }),
+          })
+          if (recRes.ok) {
+            const recJson = await recRes.json()
+            const data = recJson?.data
+            if (data) {
+              setLastRecommendationSiteId(createdSiteId)
+              setLastRecommendation({
+                infrastructureType: data.infrastructureType ?? '—',
+                investmentValue: data.investmentValue ?? 0,
+                roiMonths: data.roiMonths ?? 0,
+              })
+              toast({
+                title: 'Recommendation ready',
+                description: `${data.infrastructureType}: ₹${Number(data.investmentValue ?? 0).toLocaleString('en-IN')}, ROI ${data.roiMonths} months`,
+              })
+            }
+          }
+        } catch {
+          // non-blocking
+        }
+      }
     } catch (err) {
       console.error(err)
       toast({
@@ -152,6 +258,48 @@ export default function FarmsPage() {
     setFarms((prev) => [...prev, farm])
     setSelectedFarmId(farm._id)
   }, [])
+
+  const handleEditSite = (site: ActiveSite) => {
+    setEditingSiteId(site.id)
+    setSiteName(site.name)
+    setBoundaryPoints(site.boundary)
+    setCalculatedArea(site.area)
+  }
+
+  const handleDeleteSite = async (site: ActiveSite) => {
+    const confirmed = window.confirm('Are you sure you want to delete this site?')
+    if (!confirmed) return
+
+    const token = localStorage.getItem('forge_token')
+    const baseURL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5000'
+
+    try {
+      const res = await fetch(`${baseURL}/api/sites/${site.id}`, {
+        method: 'DELETE',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+      })
+      if (!res.ok) throw new Error('Failed to delete site')
+      if (editingSiteId === site.id) {
+        setEditingSiteId(null)
+        setSiteName('')
+        setBoundaryPoints([])
+        setCalculatedArea(0)
+        setPerimeter(0)
+      }
+      toast({ title: 'Site deleted' })
+      fetchSites()
+    } catch (err) {
+      console.error(err)
+      toast({
+        title: 'Failed to delete site',
+        description: 'Please try again.',
+        variant: 'destructive',
+      })
+    }
+  }
 
   const getStatusIcon = (status: string) => {
     switch (status) {
@@ -184,11 +332,18 @@ export default function FarmsPage() {
         <div>
           <h1 className="text-3xl font-bold tracking-tight">Farms</h1>
           <p className="text-muted-foreground">
-            Satellite map-based site evaluation and land boundary marking
+            Manage farms and site evaluations
           </p>
         </div>
 
         <div className="flex flex-wrap items-center gap-2">
+          <Button
+            className="bg-[#387F43] hover:bg-[#2d6535]"
+            onClick={() => setCreateFarmOpen(true)}
+            disabled={farmsLoading}
+          >
+            Create Farm
+          </Button>
           <Select
             value={selectedFarmId ?? ''}
             onValueChange={(v) => setSelectedFarmId(v || null)}
@@ -206,14 +361,46 @@ export default function FarmsPage() {
             </SelectContent>
           </Select>
 
-          <Button
-            variant="outline"
-            onClick={() => setCreateFarmOpen(true)}
-            disabled={farmsLoading}
-          >
-            New farm
-          </Button>
         </div>
+      </div>
+
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+        {farmsLoading ? (
+          <p className="text-sm text-muted-foreground col-span-full">Loading farms...</p>
+        ) : (
+          farms.map((farm) => (
+            <Card key={farm._id}>
+              <CardHeader className="pb-2">
+                <div className="flex items-start justify-between gap-2">
+                  <CardTitle className="text-lg">{farm.name}</CardTitle>
+                  <div className="flex items-center gap-1">
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      asChild
+                    >
+                      <Link href={`/dashboard/farms/${farm._id}/sites`}>View Sites</Link>
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="text-red-600 hover:text-red-700"
+                      onClick={() => handleDeleteFarm(farm._id, farm.name)}
+                    >
+                      Delete
+                    </Button>
+                  </div>
+                </div>
+                <CardDescription>
+                  {farm.location || "No location"} • {(farm as { siteCount?: number }).siteCount ?? 0} sites
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="text-xs text-muted-foreground">
+                Created {formatDistanceToNow(new Date(farm.createdAt), { addSuffix: true })}
+              </CardContent>
+            </Card>
+          ))
+        )}
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">
@@ -231,15 +418,44 @@ export default function FarmsPage() {
                 activeSites.map((site) => (
                   <Link key={site.id} href={`/dashboard/site-evaluations/${site.id}`}>
                     <div className="p-3 border rounded-lg hover:bg-gray-50 cursor-pointer transition-colors">
-                      <p className="font-medium text-sm">{site.name}</p>
-                      <p className="text-xs text-muted-foreground mt-1">
-                        <MapPin className="h-3 w-3 inline mr-1" />
-                        {site.area} acres
-                      </p>
-                      <div className="mt-2">
-                        <Badge className={`text-xs ${getStatusBadge(site.status)}`}>
-                          {site.status}
-                        </Badge>
+                      <div className="flex items-start justify-between gap-2">
+                        <div className="space-y-1">
+                          <p className="font-medium text-sm">{site.name}</p>
+                          <p className="text-xs text-muted-foreground">
+                            <MapPin className="h-3 w-3 inline mr-1" />
+                            {site.area} acres
+                          </p>
+                          <Badge className={`text-xs ${getStatusBadge(site.status)}`}>
+                            {site.status}
+                          </Badge>
+                        </div>
+                        <div className="flex flex-col gap-1">
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant="outline"
+                            onClick={(e) => {
+                              e.preventDefault()
+                              e.stopPropagation()
+                              handleEditSite(site)
+                            }}
+                          >
+                            Edit
+                          </Button>
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant="outline"
+                            className="text-red-600"
+                            onClick={(e) => {
+                              e.preventDefault()
+                              e.stopPropagation()
+                              handleDeleteSite(site)
+                            }}
+                          >
+                            Delete
+                          </Button>
+                        </div>
                       </div>
                     </div>
                   </Link>
@@ -278,6 +494,7 @@ export default function FarmsPage() {
                     onBoundaryChange={(points, area) => {
                       setBoundaryPoints(points)
                       setCalculatedArea(area)
+                      setPerimeter(computePerimeter(points))
                     }}
                     isFullscreen={isFullscreen}
                     onExitFullscreen={() => setIsFullscreen(false)}
@@ -290,7 +507,14 @@ export default function FarmsPage() {
                     variant="outline"
                     size="sm"
                     onClick={() =>
-                      setBoundaryPoints((prev) => prev.slice(0, prev.length - 1))
+                  setBoundaryPoints((prev) => {
+                    const next = prev.slice(0, prev.length - 1)
+                    setCalculatedArea(
+                      calculatedArea && next.length ? calculatedArea : 0
+                    )
+                    setPerimeter(computePerimeter(next))
+                    return next
+                  })
                     }
                     disabled={boundaryPoints.length === 0}
                   >
@@ -329,15 +553,71 @@ export default function FarmsPage() {
                       !calculatedArea
                     }
                   >
-                    {savingSite ? 'Saving…' : 'Save Site'}
+                    {editingSiteId
+                      ? savingSite
+                        ? 'Updating…'
+                        : 'Update Site'
+                      : savingSite
+                        ? 'Saving…'
+                        : 'Save Site'}
                   </Button>
                 </div>
 
                 {boundaryPoints.length > 0 && (
                   <p className="text-xs text-muted-foreground">
                     Points: {boundaryPoints.length} • Area:{' '}
-                    {calculatedArea ? `${calculatedArea.toFixed(2)} acres` : '—'}
+                    {calculatedArea != null ? `${calculatedArea.toFixed(2)} acres` : '—'} • Perimeter:{' '}
+                    {perimeter != null ? `${perimeter.toFixed(0)} m` : '—'} • Slope: 2.5%
                   </p>
+                )}
+                {lastRecommendation && (
+                  <div className="mt-4 p-4 rounded-lg border-2 border-[#387F43]/30 bg-[#387F43]/5">
+                    <p className="text-sm font-semibold text-[#387F43] mb-3 flex items-center gap-2">
+                      <span>⚡</span> Recommendation Ready
+                    </p>
+                    <p className="text-sm"><span className="font-medium">Infrastructure:</span> {lastRecommendation.infrastructureType}</p>
+                    <p className="text-sm"><span className="font-medium">Investment:</span> {formatINR(lastRecommendation.investmentValue)}</p>
+                    <p className="text-sm mb-3"><span className="font-medium">ROI:</span> {lastRecommendation.roiMonths} months</p>
+                    <div className="flex gap-2">
+                      <Button
+                        size="sm"
+                        className="bg-[#387F43] hover:bg-[#2d6535]"
+                        disabled={generatingReport}
+                        onClick={async () => {
+                          setGeneratingReport(true)
+                          try {
+                            const res = await reportsApi.generate({ reportType: 'infrastructure_proposal', format: 'pdf' })
+                            const downloadUrl = res?.data?.downloadUrl
+                            const fileName = res?.data?.fileName
+                            if (!downloadUrl || !fileName) throw new Error('Invalid response')
+                            const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5000'
+                            const t = localStorage.getItem('forge_token')
+                            const fileRes = await fetch(apiUrl + downloadUrl, { headers: t ? { Authorization: `Bearer ${t}` } : {} })
+                            if (!fileRes.ok) throw new Error('Download failed')
+                            const blob = await fileRes.blob()
+                            const objectUrl = URL.createObjectURL(blob)
+                            const a = document.createElement('a')
+                            a.href = objectUrl
+                            a.download = fileName
+                            a.click()
+                            URL.revokeObjectURL(objectUrl)
+                            toast({ title: 'Report generated', description: 'Download started.' })
+                          } catch (e) {
+                            toast({ title: 'Report failed', variant: 'destructive' })
+                          } finally {
+                            setGeneratingReport(false)
+                          }
+                        }}
+                      >
+                        {generatingReport ? 'Generating…' : 'Generate Report'}
+                      </Button>
+                      {lastRecommendationSiteId && (
+                        <Button size="sm" variant="outline" asChild>
+                          <Link href={`/dashboard/finance?siteId=${lastRecommendationSiteId}`}>View in Finance</Link>
+                        </Button>
+                      )}
+                    </div>
+                  </div>
                 )}
               </CardContent>
             </Card>

@@ -26,10 +26,15 @@ api.interceptors.request.use((config) => {
 api.interceptors.response.use(
   (res) => res,
   (err: AxiosError<{ error?: string }>) => {
+    if (err.response?.status === 401 && typeof window !== "undefined") {
+      localStorage.removeItem("forge_token")
+      localStorage.removeItem("forge_user")
+      window.location.href = "/login"
+    }
     const message =
       err.response?.data?.error ?? err.message ?? "Request failed"
     const status = err.response?.status ?? 500
-    throw new ApiError(status, message, err.response?.data)
+    return Promise.reject(new ApiError(status, message, err.response?.data))
   }
 )
 
@@ -58,7 +63,9 @@ async function request<T>(
 export interface AuthUser {
   id: string
   email: string
-  name: string
+  name?: string
+  firstName?: string
+  lastName?: string
   role: "admin" | "user"
 }
 
@@ -71,16 +78,16 @@ export const authApi = {
   login: (email: string, password: string) =>
     request<LoginResponse>("POST", "/api/auth/login", { email, password }),
   register: (
+    firstName: string,
+    lastName: string,
     email: string,
-    password: string,
-    name: string,
-    role?: "admin" | "user"
+    password: string
   ) =>
     request<LoginResponse>("POST", "/api/auth/register", {
+      firstName,
+      lastName,
       email,
       password,
-      name,
-      role,
     }),
   me: () => request<{ success: boolean; data: { user: AuthUser } }>("GET", "/api/auth/me"),
 }
@@ -91,21 +98,41 @@ export interface Farm {
   name: string
   description?: string
   location?: string
+  totalArea?: number
+  country?: string
+  state?: string
+  district?: string
   userId: string
+  siteCount?: number
   createdAt: string
   updatedAt: string
 }
 
 export const farmsApi = {
   list: () => request<{ success: boolean; data: Farm[] }>("GET", "/api/farms"),
-  create: (body: { name: string; description?: string; location?: string }) =>
-    request<{ success: boolean; data: Farm }>("POST", "/api/farms", body),
+  create: (body: {
+    name: string
+    location?: string
+    totalArea?: number
+    country?: string
+    state?: string
+    district?: string
+  }) => request<{ success: boolean; data: Farm }>("POST", "/api/farms", body),
   get: (id: string) =>
     request<{ success: boolean; data: Farm }>("GET", `/api/farms/${id}`),
+  getById: (id: string) =>
+    request<{ success: boolean; data: Farm }>("GET", `/api/farms/${id}`),
   update: (id: string, body: Partial<Farm>) =>
-    request<{ success: boolean; data: Farm }>("PATCH", `/api/farms/${id}`, body),
+    request<{ success: boolean; data: Farm }>("PUT", `/api/farms/${id}`, body),
+  remove: (id: string) =>
+    request<{ success: boolean; message: string }>("DELETE", `/api/farms/${id}`),
   delete: (id: string) =>
     request<{ success: boolean; message: string }>("DELETE", `/api/farms/${id}`),
+  getSites: (id: string) =>
+    request<{ success: boolean; data: { _id: string; name: string; area: number }[] }>(
+      "GET",
+      `/api/farms/${id}/sites`
+    ),
 }
 
 // Site evaluations
@@ -117,39 +144,71 @@ export interface PolygonPoint {
 
 export interface SiteEvaluation {
   _id: string
-  name: string
-  userId: string
+  siteId?: string | { _id: string; name?: string; area?: number }
   farmId?: string
-  boundary: PolygonPoint[]
-  area: number
-  areaUnit: "acres" | "sqmeters"
+  userId: string
+  soilType?: string
+  waterAvailability?: string
+  slopePercentage?: number
+  elevationMeters?: number
+  sunExposure?: "full" | "partial" | "shade"
+  status: "draft" | "submitted" | "approved" | "rejected"
+  notes?: string
+  boundary?: PolygonPoint[]
+  area?: number
+  areaUnit?: "acres" | "sqmeters"
+  name?: string
   slope?: number
   infrastructureRecommendation?: string
   costEstimate?: number
   costCurrency?: string
-  status: "draft" | "submitted"
   createdAt: string
   updatedAt: string
 }
 
+export interface SiteEvaluationCreateResponse {
+  evaluation: SiteEvaluation
+  proposal: { _id: string; infrastructureType?: string; investmentValue?: number; roiMonths?: number }
+}
+
 export const siteEvaluationsApi = {
-  list: (farmId?: string) =>
+  list: (params?: { farmId?: string; status?: string }) =>
     request<{ success: boolean; data: SiteEvaluation[] }>(
       "GET",
       "/api/site-evaluations",
       undefined,
-      farmId ? { farmId } : undefined
+      params as Record<string, string> | undefined
     ),
-  create: (body: Partial<SiteEvaluation> & { name: string; area: number }) =>
-    request<{ success: boolean; data: SiteEvaluation }>(
+  create: (body: {
+    siteId: string
+    farmId: string
+    soilType: string
+    waterAvailability: string
+    slopePercentage: number
+    elevationMeters?: number
+    sunExposure?: "full" | "partial" | "shade"
+    notes?: string
+  }) =>
+    request<{ success: boolean; data: SiteEvaluationCreateResponse }>(
       "POST",
       "/api/site-evaluations",
       body
     ),
   get: (id: string) =>
-    request<{ success: boolean; data: SiteEvaluation }>(
+    request<{ success: boolean; data: SiteEvaluation & { proposal?: unknown } }>(
       "GET",
       `/api/site-evaluations/${id}`
+    ),
+  getById: (id: string) =>
+    request<{ success: boolean; data: SiteEvaluation & { proposal?: unknown } }>(
+      "GET",
+      `/api/site-evaluations/${id}`
+    ),
+  updateStatus: (id: string, status: "submitted" | "approved" | "rejected") =>
+    request<{ success: boolean; data: SiteEvaluation }>(
+      "PATCH",
+      `/api/site-evaluations/${id}/status`,
+      { status }
     ),
   update: (id: string, body: Partial<SiteEvaluation>) =>
     request<{ success: boolean; data: SiteEvaluation }>(
@@ -200,10 +259,12 @@ export interface NotificationItem {
   _id: string
   userId: string
   user?: { name: string; avatar?: string }
+  title?: string
+  message?: string
   action: string
   content: string
   isRead: boolean
-  isNew: boolean
+  isNew?: boolean
   createdAt: string
   updatedAt: string
 }
@@ -214,39 +275,162 @@ export const notificationsApi = {
       "GET",
       "/api/notifications"
     ),
-  markAsRead: (id: string) =>
+  unreadCount: () =>
+    request<{ success: boolean; data: { count: number } }>(
+      "GET",
+      "/api/notifications/unread-count"
+    ),
+  markRead: (id: string) =>
     request<{ success: boolean; data: NotificationItem }>(
-      "PATCH",
+      "PUT",
       `/api/notifications/${id}/read`
     ),
-  markAllAsRead: () =>
+  markAsRead: (id: string) =>
+    request<{ success: boolean; data: NotificationItem }>(
+      "PUT",
+      `/api/notifications/${id}/read`
+    ),
+  markAllRead: () =>
     request<{ success: boolean; message: string }>(
-      "POST",
+      "PUT",
       "/api/notifications/read-all"
+    ),
+  remove: (id: string) =>
+    request<{ success: boolean; message: string }>(
+      "DELETE",
+      `/api/notifications/${id}`
     ),
 }
 
-// Dashboard summary
+// Dashboard summary (backend API)
+export interface DashboardSummary {
+  totalSites: number
+  totalArea: number
+  totalProposals: number
+  pipelineValue: number
+  averageROI: number
+  revenueTrend: { month: string; value: number }[]
+}
+
+export interface WorkInProgressItem {
+  _id: string
+  farmName: string
+  siteName: string
+  area: number
+  status: string
+  createdAt: string
+  updatedAt: string
+  boundaryPointCount: number
+  completionPercentage: number
+  proposalId: string | null
+}
+
 export const dashboardApi = {
-  async summary() {
-    const [farmsRes, evaluationsRes] = await Promise.all([
-      farmsApi.list(),
-      siteEvaluationsApi.list(),
-    ])
-    const farms = farmsRes.data
-    const evaluations = evaluationsRes.data
-    const draftCount = evaluations.filter((e) => e.status === "draft").length
-    const submittedCount = evaluations.filter(
-      (e) => e.status === "submitted"
-    ).length
-    const totalArea = evaluations.reduce((sum, e) => sum + (e.area ?? 0), 0)
-    return {
-      activeSites: evaluations.length,
-      draftEvaluations: draftCount,
-      submitted: submittedCount,
-      totalLandArea: totalArea,
-      farms,
-      evaluations,
-    }
-  },
+  summary: () =>
+    request<{ success: boolean; data: DashboardSummary }>("GET", "/api/dashboard/summary"),
+  workInProgress: () =>
+    request<{ success: boolean; data: WorkInProgressItem[] }>("GET", "/api/dashboard/work-in-progress"),
+}
+
+// Finance summary
+export interface FinanceSummary {
+  totalInvestment: number
+  expectedROI: number
+  avgROITimeline: number
+  activeProposals: number
+  costTrends: { month: string; polyhouse?: number; shade_net?: number; open_field?: number }[]
+  comparison: { type: string; roiMonths: number; profitMargin: string; initialInvestmentPerAcre?: string }[]
+}
+
+export const financeApi = {
+  summary: (params?: { siteId?: string }) =>
+    request<{ success: boolean; data: FinanceSummary }>("GET", "/api/finance/summary", undefined, params as Record<string, string> | undefined),
+}
+
+// Reports
+export interface ReportTypeItem {
+  reportType: string
+  lastGeneratedAt: string
+}
+
+export interface GenerateReportResponse {
+  fileName: string
+  downloadUrl: string
+}
+
+export const reportsApi = {
+  list: () =>
+    request<{ success: boolean; data: ReportTypeItem[] }>("GET", "/api/reports/list"),
+  generate: (body: { reportType: string; siteIds?: string[]; format: "pdf" | "excel" }) =>
+    request<{ success: boolean; data: GenerateReportResponse }>("POST", "/api/reports/generate", body),
+}
+
+// Settings team
+export interface TeamMember {
+  _id: string
+  name: string
+  email: string
+  role: string
+  status: "active" | "inactive"
+  createdAt?: string
+}
+
+export interface InfrastructureConfig {
+  polyhouse: { minCostPerAcre: number; maxCostPerAcre: number; roiMonths: number }
+  shade_net: { minCostPerAcre: number; maxCostPerAcre: number; roiMonths: number }
+  open_field: { minCostPerAcre: number; maxCostPerAcre: number; roiMonths: number }
+}
+
+export const settingsApi = {
+  listTeam: () =>
+    request<{ success: boolean; data: TeamMember[] }>("GET", "/api/settings/team"),
+  addTeamMember: (body: { name: string; email: string; role?: string }) =>
+    request<{ success: boolean; data: TeamMember }>("POST", "/api/settings/team", body),
+  updateTeamMember: (userId: string, body: { role?: string; status?: string }) =>
+    request<{ success: boolean; data: TeamMember }>("PUT", `/api/settings/team/${userId}`, body),
+  removeTeamMember: (userId: string) =>
+    request<{ success: boolean; message: string }>("DELETE", `/api/settings/team/${userId}`),
+  getInfrastructure: () =>
+    request<{ success: boolean; data: InfrastructureConfig }>("GET", "/api/settings/infrastructure"),
+  saveInfrastructure: (body: Partial<InfrastructureConfig>) =>
+    request<{ success: boolean; data: InfrastructureConfig }>("POST", "/api/settings/infrastructure", body),
+}
+
+// Insights (use backend base URL — api instance already sends Bearer token)
+export interface PipelineByMonth {
+  month: string
+  approved: number
+  drafted: number
+  submitted: number
+}
+
+export interface PipelineData {
+  totalPipelineValue?: number
+  proposalCount?: number
+  byMonth?: PipelineByMonth[]
+}
+
+export interface SiteRankingEntry {
+  siteId: string
+  siteName?: string
+  area: number
+  score?: number
+  roiMonths?: number | null
+  infrastructureType?: string | null
+}
+
+export interface RoiDistributionEntry {
+  month: number
+  polyhouse: number
+  shade_net: number
+  open_field: number
+}
+
+export const insightsApi = {
+  pipeline: () =>
+    request<{ success: boolean; data: PipelineData }>("GET", "/api/insights/pipeline"),
+  siteRanking: () =>
+    request<{ success: boolean; data: SiteRankingEntry[] }>("GET", "/api/insights/site-ranking"),
+  roiDistribution: () =>
+    request<{ success: boolean; data: RoiDistributionEntry[] }>("GET", "/api/insights/roi-distribution"),
 }

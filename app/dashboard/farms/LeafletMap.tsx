@@ -1,6 +1,6 @@
 "use client"
 import { useState, useEffect, useRef, FormEvent } from "react"
-import { MapContainer, TileLayer, Marker, Polygon, useMapEvents, useMap } from "react-leaflet"
+import { MapContainer, TileLayer, Marker, Polygon, ScaleControl, useMapEvents, useMap } from "react-leaflet"
 import type { LatLngExpression } from "leaflet"
 import L from "leaflet"
 import { polygon, area as turfArea, lineString, length as turfLength } from "@turf/turf"
@@ -52,6 +52,16 @@ function MapResizer({ isFullscreen }: { isFullscreen: boolean }) {
     const id = window.setTimeout(() => map.invalidateSize(), 200)
     return () => window.clearTimeout(id)
   }, [isFullscreen, map])
+  return null
+}
+
+function FitToBounds({ points }: { points: BoundaryPoint[] }) {
+  const map = useMap()
+  useEffect(() => {
+    if (points.length < 3) return
+    const bounds = L.latLngBounds(points.map((p) => [p.lat, p.lng]))
+    map.fitBounds(bounds, { padding: [24, 24] })
+  }, [points, map])
   return null
 }
 
@@ -169,6 +179,8 @@ export default function LeafletMap({ boundary, onBoundaryChange, isFullscreen, o
         <LocationFlyTo coords={currentLocation} />
         <SearchFlyTo target={searchTarget} />
         <MapResizer isFullscreen={isFullscreen} />
+        <FitToBounds points={boundaryPoints} />
+        <ScaleControl position="bottomleft" />
 
         {boundaryPoints.map((point, index) => (
           <Marker
@@ -208,9 +220,30 @@ export default function LeafletMap({ boundary, onBoundaryChange, isFullscreen, o
 
       <div className="pointer-events-none absolute right-4 bottom-4 z-[1000]">
         <div className="pointer-events-auto rounded-xl bg-white/90 px-3 py-2 text-xs shadow-sm space-y-1">
-          <div className="flex justify-between gap-4"><span className="text-muted-foreground">Points</span><span className="font-medium">{boundaryPoints.length}</span></div>
-          <div className="flex justify-between gap-4"><span className="text-muted-foreground">Area</span><span className="font-medium">{computeArea(boundaryPoints) ? `${computeArea(boundaryPoints)} ac` : "—"}</span></div>
-          <div className="flex justify-between gap-4"><span className="text-muted-foreground">Perimeter</span><span className="font-medium">{computePerimeter(boundaryPoints) ? `${computePerimeter(boundaryPoints)} m` : "—"}</span></div>
+          <div className="flex justify-between gap-4">
+            <span className="text-muted-foreground">Points</span>
+            <span className="font-medium">{boundaryPoints.length}</span>
+          </div>
+          <div className="flex justify-between gap-4">
+            <span className="text-muted-foreground">Area</span>
+            <span className="font-medium">
+              {computeArea(boundaryPoints)
+                ? `${computeArea(boundaryPoints)} acres`
+                : "—"}
+            </span>
+          </div>
+          <div className="flex justify-between gap-4">
+            <span className="text-muted-foreground">Perimeter</span>
+            <span className="font-medium">
+              {computePerimeter(boundaryPoints)
+                ? `${computePerimeter(boundaryPoints)} meters`
+                : "—"}
+            </span>
+          </div>
+          <div className="flex justify-between gap-4">
+            <span className="text-muted-foreground">Slope</span>
+            <span className="font-medium">— %</span>
+          </div>
         </div>
       </div>
     </div>

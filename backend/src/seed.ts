@@ -1,189 +1,149 @@
-import { connectDb, disconnectDb } from "./config/db"
-import { User } from "./models/User"
+import mongoose from "mongoose"
+import dotenv from "dotenv"
 import { Farm } from "./models/Farm"
+import { Site } from "./models/Site"
 import { SiteEvaluation } from "./models/SiteEvaluation"
-import { calculateCost } from "./services/costEngine"
+import { Proposal } from "./models/Proposal"
+import { User } from "./models/User"
+import { Notification } from "./models/Notification"
+
+dotenv.config()
 
 async function seed() {
-  await connectDb()
+  const uri = process.env.MONGODB_URI
+  if (!uri) {
+    console.error("MONGODB_URI is not set")
+    process.exit(1)
+  }
+
+  await mongoose.connect(uri)
+  console.log("MongoDB connected for seeding")
 
   try {
-    const email = "demo@growteq.com"
-    const password = "demo123"
-
-    let user = await User.findOne({ email })
-
+    let user = await User.findOne({ email: "admin@growteq.com" })
     if (!user) {
-      user = new User({
-        email,
-        password,
-        name: "Demo User",
+      user = await User.create({
+        email: "admin@growteq.com",
+        password: "admin123",
+        name: "Admin User",
         role: "admin",
       })
-      await user.save()
-      console.log(`[seed] Created demo user ${email}`)
+      console.log("Created admin user: admin@growteq.com / admin123")
     } else {
-      console.log("[seed] Demo user already exists")
+      console.log("Admin user already exists")
     }
 
-    // Clear existing demo data for idempotence
     await Farm.deleteMany({ userId: user._id })
-    await SiteEvaluation.deleteMany({ userId: user._id })
+    await Site.deleteMany({})
+    await SiteEvaluation.deleteMany({})
+    await Proposal.deleteMany({})
+    await Notification.deleteMany({ userId: user._id })
 
     const farm1 = await Farm.create({
+      name: "North Block Farm",
+      location: "Karnataka",
       userId: user._id,
-      name: "Green Valley Farm",
-      description: "Mixed vegetable production with drip irrigation",
-      location: "Hosahalli",
     })
-
     const farm2 = await Farm.create({
+      name: "South Block Farm",
+      location: "Karnataka",
       userId: user._id,
-      name: "Riverbend Orchard",
-      description: "Fruit orchards near the river belt",
-      location: "Mudugere",
     })
 
-    const now = new Date()
-    const oneMonthAgo = new Date(now)
-    oneMonthAgo.setMonth(oneMonthAgo.getMonth() - 1)
-    const twoMonthsAgo = new Date(now)
-    twoMonthsAgo.setMonth(twoMonthsAgo.getMonth() - 2)
-
-    // Draft evaluations (area + boundary, no infra / cost)
-    const draftBase = {
-      userId: user._id,
-      areaUnit: "acres" as const,
-      status: "draft" as const,
-    }
-
-    const draftEvaluations = [
-      {
-        name: "Hosahalli North Block",
-        farmId: farm1._id,
-        area: 5,
-        boundary: [
-          { lat: 12.9, lng: 77.5, id: "p1" },
-          { lat: 12.91, lng: 77.5, id: "p2" },
-          { lat: 12.91, lng: 77.51, id: "p3" },
-          { lat: 12.9, lng: 77.51, id: "p4" },
-        ],
-      },
-      {
-        name: "Riverbend East Plot",
-        farmId: farm2._id,
-        area: 3,
-        boundary: [
-          { lat: 12.8, lng: 77.6, id: "p1" },
-          { lat: 12.81, lng: 77.6, id: "p2" },
-          { lat: 12.81, lng: 77.61, id: "p3" },
-          { lat: 12.8, lng: 77.61, id: "p4" },
-        ],
-      },
-      {
-        name: "Trial Open Field",
-        farmId: farm1._id,
-        area: 2,
-        boundary: [
-          { lat: 12.85, lng: 77.55, id: "p1" },
-          { lat: 12.86, lng: 77.55, id: "p2" },
-          { lat: 12.86, lng: 77.56, id: "p3" },
-          { lat: 12.85, lng: 77.56, id: "p4" },
-        ],
-      },
-    ]
-
-    await SiteEvaluation.insertMany(
-      draftEvaluations.map((e) => ({
-        ...draftBase,
-        ...e,
-      }))
-    )
-
-    // Submitted evaluations with infrastructure + cost
-    const submittedPolyhouseArea = 4
-    const submittedShadeNetArea = 6
-
-    const polyhouseCost = calculateCost(submittedPolyhouseArea, "Polyhouse")
-    const shadeNetCost = calculateCost(submittedShadeNetArea, "Shade Net")
-
-    const submittedEvaluations = [
-      {
-        name: "Polyhouse Block A",
-        userId: user._id,
-        farmId: farm1._id,
-        boundary: [
-          { lat: 12.92, lng: 77.52, id: "p1" },
-          { lat: 12.93, lng: 77.52, id: "p2" },
-          { lat: 12.93, lng: 77.53, id: "p3" },
-          { lat: 12.92, lng: 77.53, id: "p4" },
-        ],
-        area: submittedPolyhouseArea,
-        areaUnit: "acres" as const,
-        slope: 3,
-        infrastructureRecommendation: "Polyhouse",
-        costEstimate: polyhouseCost,
-        costCurrency: "INR",
-        status: "submitted" as const,
-        createdAt: twoMonthsAgo,
-        updatedAt: twoMonthsAgo,
-      },
-      {
-        name: "Shade Net South Block",
-        userId: user._id,
-        farmId: farm2._id,
-        boundary: [
-          { lat: 12.88, lng: 77.58, id: "p1" },
-          { lat: 12.89, lng: 77.58, id: "p2" },
-          { lat: 12.89, lng: 77.59, id: "p3" },
-          { lat: 12.88, lng: 77.59, id: "p4" },
-        ],
-        area: submittedShadeNetArea,
-        areaUnit: "acres" as const,
-        slope: 5,
-        infrastructureRecommendation: "Shade Net",
-        costEstimate: shadeNetCost,
-        costCurrency: "INR",
-        status: "submitted" as const,
-        createdAt: oneMonthAgo,
-        updatedAt: oneMonthAgo,
-      },
-    ]
-
-    await SiteEvaluation.insertMany(submittedEvaluations)
-
-    const farmsCount = await Farm.countDocuments({ userId: user._id })
-    const draftCount = await SiteEvaluation.countDocuments({
-      userId: user._id,
-      status: "draft",
+    const site1 = await Site.create({
+      name: "Plot A",
+      area: 5,
+      perimeter: 300,
+      slope: 2,
+      farmId: farm1._id,
+      geojson: { type: "Polygon", coordinates: [[[77.5, 12.9], [77.51, 12.9], [77.51, 12.91], [77.5, 12.91], [77.5, 12.9]]] },
     })
-    const submittedCount = await SiteEvaluation.countDocuments({
+    const site2 = await Site.create({
+      name: "Plot B",
+      area: 10,
+      perimeter: 420,
+      slope: 5,
+      farmId: farm1._id,
+      geojson: { type: "Polygon", coordinates: [[[77.52, 12.88], [77.53, 12.88], [77.53, 12.89], [77.52, 12.89], [77.52, 12.88]]] },
+    })
+    const site3 = await Site.create({
+      name: "Plot C",
+      area: 15,
+      perimeter: 500,
+      slope: 8,
+      farmId: farm2._id,
+      geojson: { type: "Polygon", coordinates: [[[77.54, 12.87], [77.55, 12.87], [77.55, 12.88], [77.54, 12.88], [77.54, 12.87]]] },
+    })
+
+    const eval1 = await SiteEvaluation.create({
+      siteId: site1._id,
+      farmId: farm1._id,
       userId: user._id,
+      soilType: "Loam",
+      waterAvailability: "Borewell",
+      slopePercentage: 2,
       status: "submitted",
     })
-    const submittedForRevenue = await SiteEvaluation.find({
+    const eval2 = await SiteEvaluation.create({
+      siteId: site2._id,
+      farmId: farm1._id,
       userId: user._id,
+      soilType: "Clay",
+      waterAvailability: "Canal",
+      slopePercentage: 5,
       status: "submitted",
     })
 
-    const totalRevenue = submittedForRevenue.reduce(
-      (sum, e) => sum + (e.costEstimate ?? 0),
-      0
-    )
+    await Proposal.create([
+      {
+        title: "Proposal Plot A",
+        siteId: site1._id,
+        siteEvaluationId: eval1._id,
+        userId: user._id,
+        content: { investment: 1250000, roiMonths: 18 },
+        investmentValue: 1250000,
+        roiMonths: 18,
+        infrastructureType: "polyhouse",
+        status: "recommended",
+      },
+      {
+        title: "Proposal Plot B",
+        siteId: site2._id,
+        siteEvaluationId: eval2._id,
+        userId: user._id,
+        content: { investment: 350000, roiMonths: 6 },
+        investmentValue: 350000,
+        roiMonths: 6,
+        infrastructureType: "shade_net",
+        status: "recommended",
+      },
+      {
+        title: "Proposal Plot C",
+        siteId: site3._id,
+        userId: user._id,
+        content: { investment: 225000, roiMonths: 3 },
+        investmentValue: 225000,
+        roiMonths: 3,
+        infrastructureType: "open_field",
+        status: "recommended",
+      },
+    ])
 
-    console.log("[seed] Summary")
-    console.log(`  Farms: ${farmsCount}`)
-    console.log(`  Draft evaluations: ${draftCount}`)
-    console.log(`  Submitted evaluations: ${submittedCount}`)
-    console.log(`  Total revenue: ${totalRevenue}`)
+    await Notification.create([
+      { userId: user._id, title: "Site evaluation submitted", message: "Plot A evaluation is ready for review.", type: "info", isRead: false },
+      { userId: user._id, title: "Proposal approved", message: "Proposal for Plot B has been approved.", type: "success", isRead: false },
+      { userId: user._id, title: "New boundary drawn", message: "A new boundary was added to North Block Farm.", type: "info", isRead: false },
+    ])
+
+    console.log("Demo data inserted: 1 admin user, 2 farms, 3 sites, 3 proposals, 2 site evaluations, 3 notifications")
   } catch (err) {
-    console.error("[seed] Error seeding data:", err)
+    console.error("Seed error:", err)
+    process.exit(1)
   } finally {
-    await disconnectDb()
+    await mongoose.disconnect()
   }
+
+  process.exit(0)
 }
 
-seed().catch((err) => {
-  console.error("[seed] Unhandled error:", err)
-})
-
+seed()

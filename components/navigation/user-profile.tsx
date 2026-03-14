@@ -1,7 +1,5 @@
 "use client"
 
-import { useRouter } from "next/navigation"
-import { SafeAvatar } from "@/components/ui/safe-avatar"
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -27,29 +25,26 @@ export function UserProfile({
   name,
   email,
   company,
-  avatarUrl,
   lastLogin = defaultLastLogin,
 }: UserProfileProps) {
-  const router = useRouter()
   const { logout } = useAuth()
 
   const handleLogout = () => {
     logout()
-    router.push("/login")
   }
 
-  const initials = name
-    .split(" ")
-    .map((n) => n[0])
-    .join("")
-    .toUpperCase()
-    .substring(0, 2)
+  const firstLetter = (name.trim().split(/\s+/)[0]?.[0] ?? name[0] ?? "U").toUpperCase()
 
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
         <button className="flex items-center space-x-2 cursor-pointer">
-          <SafeAvatar src={avatarUrl} alt={name} className="h-8 w-8" />
+          <div
+            className="h-8 w-8 rounded-full bg-[#15803d] text-white flex items-center justify-center text-sm font-semibold shrink-0"
+            aria-hidden
+          >
+            {firstLetter}
+          </div>
           <div className="hidden md:flex md:flex-col md:items-start">
             <span className="font-medium text-sm">{name}</span>
             {company && <span className="text-xs text-muted-foreground">{company}</span>}
