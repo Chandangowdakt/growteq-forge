@@ -1,6 +1,6 @@
 "use client"
 import { useState, useEffect, useRef, FormEvent } from "react"
-import { MapContainer, TileLayer, Marker, Polygon, ScaleControl, useMapEvents, useMap } from "react-leaflet"
+import { MapContainer, TileLayer, Marker, Polygon, ScaleControl, ZoomControl, useMapEvents, useMap } from "react-leaflet"
 import type { LatLngExpression } from "leaflet"
 import L from "leaflet"
 import { polygon, area as turfArea, lineString, length as turfLength } from "@turf/turf"
@@ -70,8 +70,28 @@ export default function LeafletMap({ boundary, onBoundaryChange, isFullscreen, o
   const [currentLocation, setCurrentLocation] = useState<LatLngExpression | null>(null)
   const [locating, setLocating] = useState(true)
   const lastClickRef = useRef<number | null>(null)
-  const [searchValue, setSearchValue] = useState("")
+  const [coordValue, setCoordValue] = useState("")
   const [searchTarget, setSearchTarget] = useState<LatLngExpression | null>(null)
+  const [mapMode, setMapMode] = useState<"draw" | "walk">("draw")
+
+  // Location search state
+  const [searchQuery, setSearchQuery] = useState("")
+  const [searchResults, setSearchResults] = useState<{ display_name: string; lat: string; lon: string }[]>([])
+  const [showDropdown, setShowDropdown] = useState(false)
+  const searchTimeoutRef = useRef<number | null>(null)
+  const searchBoxRef = useRef<HTMLDivElement | null>(null)
+
+  // Walk mode state
+  const [walkPoints, setWalkPoints] = useState<{ lat: number; lng: number }[]>([])
+  const [walkState, setWalkState] = useState<"idle" | "walking" | "paused" | "finished">("idle")
+  const watchIdRef = useRef<number | null>(null)
+  const walkLayerRef = useRef<L.LayerGroup | null>(null)
+  const mapRef = useRef<L.Map | null>(null)
+  const onBoundaryChangeRef = useRef(onBoundaryChange)
+
+  useEffect(() => {
+    onBoundaryChangeRef.current = onBoundaryChange
+  }, [onBoundaryChange])
 
   useEffect(() => {
     if (!navigator.geolocation) { setLocating(false); return }
@@ -98,6 +118,83 @@ export default function LeafletMap({ boundary, onBoundaryChange, isFullscreen, o
     return () => { document.body.style.overflow = previous }
   }, [isFullscreen])
 
+  // Cleanup geolocation watch on unmount
+  useEffect(() => {
+    return () => {
+      if (watchIdRef.current != null) {
+        navigator.geolocation.clearWatch(watchIdRef.current)
+        watchIdRef.current = null
+      }
+    }
+  }, [])
+
+  // Reset drawing and walking state when mode changes
+  useEffect(() => {
+    // Stop any active watch
+    if (watchIdRef.current != null) {
+      navigator.geolocation.clearWatch(watchIdRef.current)
+      watchIdRef.current = null
+    }
+    setWalkPoints([])
+    setWalkState("idle")
+    if (walkLayerRef.current) {
+      walkLayerRef.current.clearLayers()
+    }
+    setBoundaryPoints([])
+    onBoundaryChangeRef.current?.([], 0)
+  }, [mapMode])
+
+  // Debounced Nominatim search
+  useEffect(() => {
+    if (!searchQuery || searchQuery.length < 3) {
+      setSearchResults([])
+      setShowDropdown(false)
+      if (searchTimeoutRef.current != null) {
+        window.clearTimeout(searchTimeoutRef.current)
+        searchTimeoutRef.current = null
+      }
+      return
+    }
+
+    if (searchTimeoutRef.current != null) {
+      window.clearTimeout(searchTimeoutRef.current)
+    }
+    searchTimeoutRef.current = window.setTimeout(async () => {
+      try {
+        const url = `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(
+          searchQuery
+        )}&format=json&limit=5&countrycodes=in`
+        const res = await fetch(url, { headers: { "Accept-Language": "en" } })
+        if (!res.ok) return
+        const data = (await res.json()) as { display_name: string; lat: string; lon: string }[]
+        setSearchResults(data)
+        setShowDropdown(data.length > 0)
+      } catch {
+        // ignore search errors
+      }
+    }, 500)
+
+    return () => {
+      if (searchTimeoutRef.current != null) {
+        window.clearTimeout(searchTimeoutRef.current)
+        searchTimeoutRef.current = null
+      }
+    }
+  }, [searchQuery])
+
+  // Close dropdown on outside click
+  useEffect(() => {
+    if (typeof document === "undefined") return
+    const handler = (e: MouseEvent) => {
+      if (!searchBoxRef.current) return
+      if (!searchBoxRef.current.contains(e.target as Node)) {
+        setShowDropdown(false)
+      }
+    }
+    document.addEventListener("click", handler)
+    return () => document.removeEventListener("click", handler)
+  }, [])
+
   const computeArea = (points: BoundaryPoint[]): number => {
     if (points.length < 3) return 0
     const coords = points.map((p) => [p.lng, p.lat])
@@ -113,6 +210,7 @@ export default function LeafletMap({ boundary, onBoundaryChange, isFullscreen, o
   }
 
   const handleSelect = (lat: number, lng: number) => {
+    if (mapMode !== "draw") return
     const now = Date.now()
     if (lastClickRef.current && now - lastClickRef.current < 300) return
     lastClickRef.current = now
@@ -120,17 +218,164 @@ export default function LeafletMap({ boundary, onBoundaryChange, isFullscreen, o
     const point: BoundaryPoint = { lat, lng, id: `p-${Date.now()}-${Math.random().toString(36).slice(2, 6)}` }
     setBoundaryPoints((prev) => {
       const updated = [...prev, point]
-      onBoundaryChange(updated, computeArea(updated))
+      const area = computeArea(updated)
+      onBoundaryChangeRef.current?.(updated, area)
       return updated
     })
   }
 
   const handleSearchSubmit = (e: FormEvent) => {
     e.preventDefault()
-    const [latStr, lngStr] = searchValue.trim().split(",")
+    const [latStr, lngStr] = coordValue.trim().split(",")
     const lat = parseFloat(latStr), lng = parseFloat(lngStr)
     if (Number.isFinite(lat) && Number.isFinite(lng)) setSearchTarget([lat, lng])
   }
+
+  const distanceMeters = (() => {
+    if (walkPoints.length < 2) return 0
+    let total = 0
+    for (let i = 1; i < walkPoints.length; i++) {
+      const prev = walkPoints[i - 1]
+      const pt = walkPoints[i]
+      const line = lineString([
+        [prev.lng, prev.lat],
+        [pt.lng, pt.lat],
+      ])
+      total += turfLength(line, { units: "kilometers" }) * 1000
+    }
+    return total
+  })()
+
+  const walkAreaAcres = (() => {
+    if (walkPoints.length < 3) return 0
+    const closed = [...walkPoints, walkPoints[0]]
+    const coords = closed.map((p) => [p.lng, p.lat])
+    return Number((turfArea(polygon([coords])) / 4046.8564224).toFixed(2))
+  })()
+
+  const ensureWalkLayer = () => {
+    if (!mapRef.current) return
+    if (!walkLayerRef.current) {
+      walkLayerRef.current = L.layerGroup().addTo(mapRef.current)
+    }
+    walkLayerRef.current.clearLayers()
+  }
+
+  const renderWalkPath = (points: { lat: number; lng: number }[]) => {
+    if (!mapRef.current || points.length === 0) return
+    ensureWalkLayer()
+    if (!walkLayerRef.current) return
+    const latLngs = points.map((p) => [p.lat, p.lng]) as [number, number][]
+    L.polyline(latLngs, {
+      color: "#3b82f6",
+      weight: 2,
+      dashArray: "6 4",
+    }).addTo(walkLayerRef.current)
+    for (const p of points) {
+      L.circleMarker([p.lat, p.lng], {
+        radius: 4,
+        color: "#3b82f6",
+        weight: 2,
+        fillColor: "#3b82f6",
+        fillOpacity: 0.9,
+      }).addTo(walkLayerRef.current)
+    }
+  }
+
+  const renderWalkPolygon = (closed: { lat: number; lng: number }[]) => {
+    if (!mapRef.current || closed.length < 3) return
+    ensureWalkLayer()
+    if (!walkLayerRef.current) return
+    const latLngs = closed.map((p) => [p.lat, p.lng]) as [number, number][]
+    L.polygon(latLngs, {
+      color: "#16a34a",
+      weight: 2,
+      opacity: 1,
+      fillColor: "#22c55e",
+      fillOpacity: 0.2,
+    }).addTo(walkLayerRef.current)
+  }
+
+  const startWalk = () => {
+    if (walkState === "walking") return
+    if (!navigator.geolocation) {
+      alert("GPS not available")
+      return
+    }
+    const watchId = navigator.geolocation.watchPosition(
+      (pos) => {
+        const pt = { lat: pos.coords.latitude, lng: pos.coords.longitude }
+        setWalkPoints((prev) => {
+          const next = [...prev, pt]
+          renderWalkPath(next)
+          if (mapRef.current) {
+            mapRef.current.panTo([pt.lat, pt.lng])
+          }
+          return next
+        })
+      },
+      (err) => {
+        console.warn("GPS error:", err)
+      },
+      { enableHighAccuracy: true, maximumAge: 0, timeout: 10000 }
+    )
+    watchIdRef.current = watchId
+    setWalkState("walking")
+  }
+
+  const pauseWalk = () => {
+    if (watchIdRef.current != null) {
+      navigator.geolocation.clearWatch(watchIdRef.current)
+      watchIdRef.current = null
+    }
+    if (walkState === "walking") {
+      setWalkState("paused")
+    }
+  }
+
+  const finishWalk = () => {
+    pauseWalk()
+    if (walkPoints.length < 3) {
+      alert("Need at least 3 points to calculate area.")
+      return
+    }
+    const closed = [...walkPoints, walkPoints[0]]
+    renderWalkPolygon(closed)
+    // Update drawing state so Save Site works with walked polygon
+    const boundaryFromWalk: BoundaryPoint[] = walkPoints.map((p, idx) => ({
+      lat: p.lat,
+      lng: p.lng,
+      id: `w-${idx}`,
+    }))
+    setBoundaryPoints(boundaryFromWalk)
+    const area = walkAreaAcres
+    onBoundaryChangeRef.current?.(boundaryFromWalk, area)
+    setWalkState("finished")
+  }
+
+  const firstPointIcon = L.divIcon({
+    html: `<svg width="24" height="36" viewBox="0 0 24 36" xmlns="http://www.w3.org/2000/svg">
+             <path d="M12 0C5.4 0 0 5.4 0 12c0 9 12 24 12 24s12-15 12-24C24 5.4 18.6 0 12 0z" 
+                   fill="#ef4444" stroke="white" stroke-width="1"/>
+             <circle cx="12" cy="12" r="4" fill="white"/>
+           </svg>`,
+    iconSize: [24, 36] as L.PointExpression,
+    iconAnchor: [12, 36] as L.PointExpression,
+    popupAnchor: [0, -36] as L.PointExpression,
+    className: "",
+  })
+
+  const otherPointIcon = L.divIcon({
+    html: `<svg width="14" height="14" viewBox="0 0 14 14" xmlns="http://www.w3.org/2000/svg">
+             <circle cx="7" cy="7" r="5" 
+                     fill="#3b82f6" 
+                     stroke="white" 
+                     stroke-width="2"/>
+           </svg>`,
+    iconSize: [14, 14] as L.PointExpression,
+    iconAnchor: [7, 7] as L.PointExpression,
+    className: "",
+  })
 
   return (
     <div className={isFullscreen ? "fixed inset-0 z-[9999] bg-black transition-all duration-200" : "relative h-full w-full"}>
@@ -155,6 +400,7 @@ export default function LeafletMap({ boundary, onBoundaryChange, isFullscreen, o
         zoomDelta={0.5}
         style={{ height: "100%", width: "100%", cursor: "crosshair" }}
         scrollWheelZoom
+        zoomControl={false}
       >
         {(() => {
           const token = process.env.NEXT_PUBLIC_MAPBOX_TOKEN
@@ -181,23 +427,26 @@ export default function LeafletMap({ boundary, onBoundaryChange, isFullscreen, o
         <MapResizer isFullscreen={isFullscreen} />
         <FitToBounds points={boundaryPoints} />
         <ScaleControl position="bottomleft" />
+        <ZoomControl position="bottomleft" />
 
         {boundaryPoints.map((point, index) => (
           <Marker
             key={point.id}
             position={[point.lat, point.lng]}
-            icon={L.divIcon({
-              html: `<div style="background:#387F43;color:white;border-radius:9999px;width:20px;height:20px;display:flex;align-items:center;justify-content:center;font-size:12px;">${index + 1}</div>`,
-              iconSize: [20, 20],
-              iconAnchor: [10, 20],
-            })}
+            icon={firstPointIcon}
           />
         ))}
 
         {boundaryPoints.length >= 3 && (
           <Polygon
             positions={boundary}
-            pathOptions={{ color: "#00F5FF", weight: 5, opacity: 1, fillColor: "#00F5FF", fillOpacity: 0.12 }}
+            pathOptions={{
+              color: "#16a34a",
+              weight: 2,
+              opacity: 1,
+              fillColor: "#22c55e",
+              fillOpacity: 0.2,
+            }}
           />
         )}
       </MapContainer>
@@ -209,42 +458,199 @@ export default function LeafletMap({ boundary, onBoundaryChange, isFullscreen, o
         </button>
       )}
 
-      <div className="pointer-events-none absolute left-4 top-4 z-[1000]">
-        <form onSubmit={handleSearchSubmit}
-          className="pointer-events-auto flex items-center gap-2 rounded-full bg-white/90 px-3 py-1 shadow-sm">
-          <input type="text" value={searchValue} onChange={(e) => setSearchValue(e.target.value)}
-            placeholder="12.9716,77.5946" className="w-40 border-none bg-transparent text-xs outline-none" />
-          <button type="submit" className="rounded-full bg-[#387F43] px-2 py-1 text-[10px] font-medium text-white">Go</button>
+      <div className="pointer-events-none absolute left-4 top-4 z-[1000] space-y-2">
+        <div
+          ref={searchBoxRef}
+          className="pointer-events-auto w-64 rounded-lg bg-white/95 px-3 py-2 shadow-sm border border-gray-200"
+        >
+          <input
+            type="text"
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            placeholder="Search village, district, city..."
+            className="w-full border-none bg-transparent text-xs outline-none focus:ring-0"
+          />
+          {showDropdown && searchResults.length > 0 && (
+            <div className="mt-2 max-h-40 w-full overflow-y-auto rounded-md border bg-white text-xs shadow-lg">
+              {searchResults.map((r, idx) => (
+                <button
+                  key={`${r.lat}-${r.lon}-${idx}`}
+                  type="button"
+                  className="block w-full px-2 py-1 text-left hover:bg-gray-100"
+                  onClick={() => {
+                    const lat = parseFloat(r.lat)
+                    const lon = parseFloat(r.lon)
+                    if (Number.isFinite(lat) && Number.isFinite(lon)) {
+                      if (mapRef.current) {
+                        mapRef.current.flyTo([lat, lon], 15)
+                      } else {
+                        setSearchTarget([lat, lon])
+                      }
+                    }
+                    const shortName = r.display_name.split(",")[0] ?? r.display_name
+                    setSearchQuery(shortName)
+                    setShowDropdown(false)
+                    setSearchResults([])
+                  }}
+                >
+                  {r.display_name.length > 60
+                    ? `${r.display_name.slice(0, 57)}...`
+                    : r.display_name}
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+
+        <form
+          onSubmit={handleSearchSubmit}
+          className="pointer-events-auto flex items-center gap-2 rounded-full bg-white/90 px-3 py-1 shadow-sm"
+        >
+          <input
+            type="text"
+            value={coordValue}
+            onChange={(e) => setCoordValue(e.target.value)}
+            placeholder="12.9716,77.5946"
+            className="w-40 border-none bg-transparent text-xs outline-none"
+          />
+          <button
+            type="submit"
+            className="rounded-full bg-[#387F43] px-2 py-1 text-[10px] font-medium text-white"
+          >
+            Go
+          </button>
         </form>
+
+        <div className="pointer-events-auto mt-1 inline-flex rounded-full bg-white/90 p-1 text-[10px] shadow-sm">
+          <button
+            type="button"
+            className={`px-3 py-1 rounded-full ${
+              mapMode === "draw"
+                ? "bg-[#387F43] text-white"
+                : "bg-transparent text-gray-700 border border-gray-200"
+            }`}
+            onClick={() => setMapMode("draw")}
+          >
+            Draw Boundary
+          </button>
+          <button
+            type="button"
+            className={`ml-1 px-3 py-1 rounded-full ${
+              mapMode === "walk"
+                ? "bg-[#387F43] text-white"
+                : "bg-transparent text-gray-700 border border-gray-200"
+            }`}
+            onClick={() => setMapMode("walk")}
+          >
+            Walk Mode
+          </button>
+        </div>
       </div>
 
       <div className="pointer-events-none absolute right-4 bottom-4 z-[1000]">
-        <div className="pointer-events-auto rounded-xl bg-white/90 px-3 py-2 text-xs shadow-sm space-y-1">
-          <div className="flex justify-between gap-4">
-            <span className="text-muted-foreground">Points</span>
-            <span className="font-medium">{boundaryPoints.length}</span>
+        {mapMode === "draw" ? (
+          <div className="pointer-events-auto rounded-xl bg-white/90 px-3 py-2 text-xs shadow-sm space-y-1">
+            <div className="flex justify-between gap-4">
+              <span className="text-muted-foreground">Points</span>
+              <span className="font-medium">{boundaryPoints.length}</span>
+            </div>
+            <div className="flex justify-between gap-4">
+              <span className="text-muted-foreground">Area</span>
+              <span className="font-medium">
+                {computeArea(boundaryPoints) ? `${computeArea(boundaryPoints)} acres` : "—"}
+              </span>
+            </div>
+            <div className="flex justify-between gap-4">
+              <span className="text-muted-foreground">Perimeter</span>
+              <span className="font-medium">
+                {computePerimeter(boundaryPoints)
+                  ? `${computePerimeter(boundaryPoints)} meters`
+                  : "—"}
+              </span>
+            </div>
+            <div className="flex justify-between gap-4">
+              <span className="text-muted-foreground">Slope</span>
+              <span className="font-medium">2.5%</span>
+            </div>
           </div>
-          <div className="flex justify-between gap-4">
-            <span className="text-muted-foreground">Area</span>
-            <span className="font-medium">
-              {computeArea(boundaryPoints)
-                ? `${computeArea(boundaryPoints)} acres`
-                : "—"}
-            </span>
+        ) : (
+          <div className="pointer-events-auto space-y-2">
+            <div className="rounded-xl bg-white/90 px-3 py-2 text-xs shadow-sm space-y-1">
+              <div className="flex justify-between gap-4">
+                <span className="text-muted-foreground">Points</span>
+                <span className="font-medium">{walkPoints.length}</span>
+              </div>
+              <div className="flex justify-between gap-4">
+                <span className="text-muted-foreground">Distance</span>
+                <span className="font-medium">
+                  {distanceMeters ? `${distanceMeters.toFixed(0)} m` : "—"}
+                </span>
+              </div>
+              <div className="flex justify-between gap-4">
+                <span className="text-muted-foreground">Area</span>
+                <span className="font-medium">
+                  {walkAreaAcres ? `${walkAreaAcres.toFixed(2)} acres` : "—"}
+                </span>
+              </div>
+              <div className="flex justify-between gap-4">
+                <span className="text-muted-foreground">Slope</span>
+                <span className="font-medium">2.5%</span>
+              </div>
+            </div>
+            <div className="flex flex-wrap gap-2 justify-end text-[10px]">
+              {walkState === "idle" && (
+                <button
+                  type="button"
+                  className="pointer-events-auto rounded-full bg-[#387F43] px-3 py-1 font-medium text-white"
+                  onClick={startWalk}
+                >
+                  Start Walk
+                </button>
+              )}
+              {walkState === "walking" && (
+                <>
+                  <button
+                    type="button"
+                    className="pointer-events-auto rounded-full bg-gray-100 px-3 py-1 font-medium text-gray-800 border border-gray-300"
+                    onClick={pauseWalk}
+                  >
+                    Pause Walk
+                  </button>
+                  <button
+                    type="button"
+                    className="pointer-events-auto rounded-full bg-[#387F43] px-3 py-1 font-medium text-white"
+                    onClick={finishWalk}
+                  >
+                    Finish Walk
+                  </button>
+                </>
+              )}
+              {walkState === "paused" && (
+                <>
+                  <button
+                    type="button"
+                    className="pointer-events-auto rounded-full bg-[#387F43] px-3 py-1 font-medium text-white"
+                    onClick={startWalk}
+                  >
+                    Resume Walk
+                  </button>
+                  <button
+                    type="button"
+                    className="pointer-events-auto rounded-full bg-red-600 px-3 py-1 font-medium text-white"
+                    onClick={finishWalk}
+                  >
+                    Finish Walk
+                  </button>
+                </>
+              )}
+              {walkState === "finished" && (
+                <span className="pointer-events-auto rounded-full bg-emerald-100 px-3 py-1 font-medium text-emerald-800">
+                  Walk completed — save site from Farms panel
+                </span>
+              )}
+            </div>
           </div>
-          <div className="flex justify-between gap-4">
-            <span className="text-muted-foreground">Perimeter</span>
-            <span className="font-medium">
-              {computePerimeter(boundaryPoints)
-                ? `${computePerimeter(boundaryPoints)} meters`
-                : "—"}
-            </span>
-          </div>
-          <div className="flex justify-between gap-4">
-            <span className="text-muted-foreground">Slope</span>
-            <span className="font-medium">— %</span>
-          </div>
-        </div>
+        )}
       </div>
     </div>
   )

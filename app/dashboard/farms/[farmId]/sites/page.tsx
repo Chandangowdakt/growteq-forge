@@ -88,7 +88,7 @@ export default function FarmSitesPage() {
                     </p>
                   </div>
                   <Button variant="outline" size="sm" asChild>
-                    <Link href={`/dashboard/site-evaluations/${site._id}`}>View</Link>
+                    <Link href={`/dashboard/farms/${farmId}/sites/${site._id}`}>View</Link>
                   </Button>
                 </li>
               ))}

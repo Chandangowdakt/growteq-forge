@@ -13,8 +13,9 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
-import { MapPin, CheckCircle, Clock, AlertCircle } from 'lucide-react'
-import { siteEvaluationsApi, farmsApi, reportsApi, type SiteEvaluation, type Farm } from '@/lib/api'
+import { MapPin } from 'lucide-react'
+import { farmsApi, reportsApi, type Farm } from '@/lib/api'
+import { getUserRole, hasPermission } from '@/lib/permissions'
 import { formatINR } from '@/lib/utils'
 import { formatDistanceToNow } from 'date-fns'
 import { toast } from '@/hooks/use-toast'
@@ -40,30 +41,11 @@ const LeafletMap = dynamic<LeafletMapProps>(() => import('./LeafletMap'), {
   ),
 })
 
-interface ActiveSite {
-  id: string
-  name: string
-  status: string
-  lastMarked: string
-  area: number
-  boundary: BoundaryPoint[]
-}
-
-function toActiveSite(e: SiteEvaluation): ActiveSite {
-  const siteRef = typeof e.siteId === 'object' && e.siteId && 'name' in e.siteId ? e.siteId : null
-  return {
-    id: e._id,
-    name: (siteRef as { name?: string })?.name ?? (e as { name?: string }).name ?? 'Site',
-    status: e.status,
-    lastMarked: formatDistanceToNow(new Date(e.updatedAt), { addSuffix: true }),
-    area: typeof (siteRef as { area?: number })?.area === 'number' ? (siteRef as { area: number }).area : (e as { area?: number }).area ?? 0,
-    boundary: (e.boundary as unknown as BoundaryPoint[]) ?? [],
-  }
-}
-
 export default function FarmsPage() {
-  const [activeSites, setActiveSites] = useState<ActiveSite[]>([])
-  const [loading, setLoading] = useState(true)
+  const [farmSites, setFarmSites] = useState<
+    { _id: string; name: string; area: number; perimeter?: number; status?: string; createdAt?: string }[]
+  >([])
+  const [farmSitesLoading, setFarmSitesLoading] = useState(false)
   const [farms, setFarms] = useState<Farm[]>([])
   const [selectedFarmId, setSelectedFarmId] = useState<string | null>(null)
   const [createFarmOpen, setCreateFarmOpen] = useState(false)
@@ -82,6 +64,11 @@ export default function FarmsPage() {
   } | null>(null)
   const [lastRecommendationSiteId, setLastRecommendationSiteId] = useState<string | null>(null)
   const [generatingReport, setGeneratingReport] = useState(false)
+  const [role, setRole] = useState('sales_associate')
+
+  useEffect(() => {
+    setRole(getUserRole())
+  }, [])
 
   const fetchFarms = useCallback(async () => {
     setFarmsLoading(true)
@@ -94,7 +81,6 @@ export default function FarmsPage() {
       setFarmsLoading(false)
     }
   }, [])
-
   const handleDeleteFarm = useCallback(
     async (farmId: string, farmName: string) => {
       if (typeof window !== "undefined" && !window.confirm(`Delete farm "${farmName}"? This will soft-delete the farm.`)) return
@@ -113,23 +99,29 @@ export default function FarmsPage() {
     fetchFarms()
   }, [fetchFarms])
 
-  const fetchSites = useCallback(async () => {
-    setLoading(true)
+  const fetchFarmSites = useCallback(async () => {
+    if (!selectedFarmId) {
+      setFarmSites([])
+      return
+    }
+    setFarmSitesLoading(true)
     try {
-      const res = await siteEvaluationsApi.list(
-        selectedFarmId ? { farmId: selectedFarmId } : undefined
-      )
-      if (res.success && res.data) setActiveSites(res.data.map(toActiveSite))
+      const res = await farmsApi.getSites(selectedFarmId)
+      if (res.success && res.data) {
+        setFarmSites(res.data)
+      } else {
+        setFarmSites([])
+      }
     } catch {
-      setActiveSites([])
+      setFarmSites([])
     } finally {
-      setLoading(false)
+      setFarmSitesLoading(false)
     }
   }, [selectedFarmId])
 
   useEffect(() => {
-    fetchSites()
-  }, [fetchSites])
+    void fetchFarmSites()
+  }, [fetchFarmSites])
 
   const computePerimeter = (points: BoundaryPoint[]): number => {
     if (points.length < 2) return 0
@@ -206,7 +198,7 @@ export default function FarmsPage() {
       setPerimeter(0)
       setLastRecommendation(null)
       setLastRecommendationSiteId(null)
-      fetchSites()
+      void fetchFarmSites()
 
       if (!editingSiteId && createdSiteId && calculatedArea) {
         try {
@@ -259,14 +251,14 @@ export default function FarmsPage() {
     setSelectedFarmId(farm._id)
   }, [])
 
-  const handleEditSite = (site: ActiveSite) => {
+  const handleEditSite = (site: { id: string; name: string; boundary: BoundaryPoint[]; area: number }) => {
     setEditingSiteId(site.id)
     setSiteName(site.name)
     setBoundaryPoints(site.boundary)
     setCalculatedArea(site.area)
   }
 
-  const handleDeleteSite = async (site: ActiveSite) => {
+  const handleDeleteSite = async (site: { id: string }) => {
     const confirmed = window.confirm('Are you sure you want to delete this site?')
     if (!confirmed) return
 
@@ -290,7 +282,7 @@ export default function FarmsPage() {
         setPerimeter(0)
       }
       toast({ title: 'Site deleted' })
-      fetchSites()
+      void fetchFarmSites()
     } catch (err) {
       console.error(err)
       toast({
@@ -301,23 +293,11 @@ export default function FarmsPage() {
     }
   }
 
-  const getStatusIcon = (status: string) => {
-    switch (status) {
-      case 'submitted':
-        return <CheckCircle className="h-4 w-4 text-green-600" />
-      case 'draft':
-        return <Clock className="h-4 w-4 text-orange-600" />
-      default:
-        return <AlertCircle className="h-4 w-4 text-gray-400" />
-    }
-  }
-
-  const getStatusBadge = (status: string) => {
-    const variants: Record<string, string> = {
-      submitted: 'bg-green-100 text-green-800',
-      draft: 'bg-orange-100 text-orange-800',
-    }
-    return variants[status] ?? 'bg-gray-100 text-gray-800'
+  const getSiteStatusBadge = (status?: string) => {
+    if (status === 'approved') return 'bg-green-100 text-green-800'
+    if (status === 'submitted') return 'bg-blue-100 text-blue-800'
+    if (status === 'draft') return 'bg-orange-100 text-orange-800'
+    return 'bg-gray-100 text-gray-800'
   }
 
   return (
@@ -337,13 +317,15 @@ export default function FarmsPage() {
         </div>
 
         <div className="flex flex-wrap items-center gap-2">
-          <Button
-            className="bg-[#387F43] hover:bg-[#2d6535]"
-            onClick={() => setCreateFarmOpen(true)}
-            disabled={farmsLoading}
-          >
-            Create Farm
-          </Button>
+          {hasPermission(role, 'canCreateFarm') && (
+            <Button
+              className="bg-[#387F43] hover:bg-[#2d6535]"
+              onClick={() => setCreateFarmOpen(true)}
+              disabled={farmsLoading}
+            >
+              Create Farm
+            </Button>
+          )}
           <Select
             value={selectedFarmId ?? ''}
             onValueChange={(v) => setSelectedFarmId(v || null)}
@@ -381,14 +363,16 @@ export default function FarmsPage() {
                     >
                       <Link href={`/dashboard/farms/${farm._id}/sites`}>View Sites</Link>
                     </Button>
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      className="text-red-600 hover:text-red-700"
-                      onClick={() => handleDeleteFarm(farm._id, farm.name)}
-                    >
-                      Delete
-                    </Button>
+                    {hasPermission(role, 'canDeleteFarm') && (
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="text-red-600 hover:text-red-700"
+                        onClick={() => handleDeleteFarm(farm._id, farm.name)}
+                      >
+                        Delete
+                      </Button>
+                    )}
                   </div>
                 </div>
                 <CardDescription>
@@ -407,59 +391,62 @@ export default function FarmsPage() {
         <div className="lg:col-span-1">
           <Card>
             <CardHeader>
-              <CardTitle className="text-lg">Active Sites</CardTitle>
-              <CardDescription>{activeSites.length} sites</CardDescription>
+              <CardTitle className="text-lg">Sites</CardTitle>
+              <CardDescription>
+                {selectedFarmId ? `${farmSites.length} site(s)` : 'Select a farm to view its sites'}
+              </CardDescription>
             </CardHeader>
 
             <CardContent className="space-y-3">
-              {loading ? (
+              {!selectedFarmId ? (
+                <p className="text-sm text-muted-foreground">
+                  Select a farm from the dropdown to view its sites.
+                </p>
+              ) : farmSitesLoading ? (
                 <p className="text-sm text-muted-foreground">Loading sites...</p>
+              ) : farmSites.length === 0 ? (
+                <p className="text-sm text-muted-foreground">
+                  No sites yet. Draw a boundary on the map to create one.
+                </p>
               ) : (
-                activeSites.map((site) => (
-                  <Link key={site.id} href={`/dashboard/site-evaluations/${site.id}`}>
-                    <div className="p-3 border rounded-lg hover:bg-gray-50 cursor-pointer transition-colors">
-                      <div className="flex items-start justify-between gap-2">
+                <>
+                  {farmSites.map((site) => (
+                    <Link
+                      key={site._id}
+                      href={`/dashboard/farms/${selectedFarmId}/sites/${site._id}`}
+                    >
+                      <div className="p-3 border rounded-lg hover:bg-gray-50 cursor-pointer transition-colors">
                         <div className="space-y-1">
                           <p className="font-medium text-sm">{site.name}</p>
                           <p className="text-xs text-muted-foreground">
                             <MapPin className="h-3 w-3 inline mr-1" />
-                            {site.area} acres
+                            Area: {site.area} acres
+                            {site.perimeter != null ? ` • Perimeter: ${site.perimeter} m` : ''}
                           </p>
-                          <Badge className={`text-xs ${getStatusBadge(site.status)}`}>
-                            {site.status}
-                          </Badge>
-                        </div>
-                        <div className="flex flex-col gap-1">
-                          <Button
-                            type="button"
-                            size="sm"
-                            variant="outline"
-                            onClick={(e) => {
-                              e.preventDefault()
-                              e.stopPropagation()
-                              handleEditSite(site)
-                            }}
-                          >
-                            Edit
-                          </Button>
-                          <Button
-                            type="button"
-                            size="sm"
-                            variant="outline"
-                            className="text-red-600"
-                            onClick={(e) => {
-                              e.preventDefault()
-                              e.stopPropagation()
-                              handleDeleteSite(site)
-                            }}
-                          >
-                            Delete
-                          </Button>
+                          <div className="flex items-center justify-between gap-2">
+                            <Badge className={`text-xs ${getSiteStatusBadge(site.status)}`}>
+                              {site.status ?? 'draft'}
+                            </Badge>
+                            {site.createdAt && (
+                              <span className="text-[10px] text-muted-foreground">
+                                {formatDistanceToNow(new Date(site.createdAt), { addSuffix: true })}
+                              </span>
+                            )}
+                          </div>
                         </div>
                       </div>
-                    </div>
-                  </Link>
-                ))
+                    </Link>
+                  ))}
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    className="w-full mt-2"
+                    asChild
+                  >
+                    <Link href={`/dashboard/farms/${selectedFarmId}/sites`}>View All Sites</Link>
+                  </Button>
+                </>
               )}
             </CardContent>
           </Card>
@@ -491,7 +478,7 @@ export default function FarmsPage() {
                 <div className="h-72 w-full overflow-hidden rounded-lg border">
                   <LeafletMap
                     boundary={boundaryPoints}
-                    onBoundaryChange={(points, area) => {
+                    onBoundaryChange={(points: BoundaryPoint[], area: number) => {
                       setBoundaryPoints(points)
                       setCalculatedArea(area)
                       setPerimeter(computePerimeter(points))
@@ -543,24 +530,26 @@ export default function FarmsPage() {
                     onChange={(e) => setSiteName(e.target.value)}
                   />
 
-                  <Button
-                    onClick={handleSaveSite}
-                    disabled={
-                      savingSite ||
-                      !siteName.trim() ||
-                      !selectedFarmId ||
-                      boundaryPoints.length < 3 ||
-                      !calculatedArea
-                    }
-                  >
-                    {editingSiteId
-                      ? savingSite
-                        ? 'Updating…'
-                        : 'Update Site'
-                      : savingSite
-                        ? 'Saving…'
-                        : 'Save Site'}
-                  </Button>
+                  {hasPermission(role, 'canCreateSite') && (
+                    <Button
+                      onClick={handleSaveSite}
+                      disabled={
+                        savingSite ||
+                        !siteName.trim() ||
+                        !selectedFarmId ||
+                        boundaryPoints.length < 3 ||
+                        !calculatedArea
+                      }
+                    >
+                      {editingSiteId
+                        ? savingSite
+                          ? 'Updating…'
+                          : 'Update Site'
+                        : savingSite
+                          ? 'Saving…'
+                          : 'Save Site'}
+                    </Button>
+                  )}
                 </div>
 
                 {boundaryPoints.length > 0 && (

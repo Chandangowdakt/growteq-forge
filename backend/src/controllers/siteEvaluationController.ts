@@ -47,6 +47,10 @@ export const createSiteEvaluation = asyncHandler(async (req: AuthenticatedReques
     elevationMeters,
     sunExposure,
     notes,
+    infrastructureType,
+    numberOfUnits,
+    cropType,
+    calculatedInvestment,
   } = req.body
   if (!siteId || !farmId || !soilType || !waterAvailability || slopePercentage == null) {
     throw new ApiError(
@@ -64,6 +68,12 @@ export const createSiteEvaluation = asyncHandler(async (req: AuthenticatedReques
     elevationMeters: elevationMeters != null ? Number(elevationMeters) : undefined,
     sunExposure: sunExposure ?? "full",
     notes: notes?.trim?.(),
+    ...(typeof numberOfUnits === "number" && Number.isFinite(numberOfUnits) && { numberOfUnits }),
+    ...(typeof cropType === "string" && cropType.trim() && { cropType: cropType.trim() }),
+    ...(typeof calculatedInvestment === "number" &&
+      Number.isFinite(calculatedInvestment) && { calculatedInvestment }),
+    ...(typeof infrastructureType === "string" &&
+      infrastructureType && { infrastructureRecommendation: infrastructureType }),
   })
   const site = await Site.findById(siteId).lean()
   const area = (site?.area as number) ?? 0

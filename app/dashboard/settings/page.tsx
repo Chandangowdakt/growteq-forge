@@ -27,6 +27,7 @@ import {
 } from "@/components/ui/alert-dialog"
 import { Settings as SettingsIcon, Users, MapPin, Bell, Lock } from "lucide-react"
 import { settingsApi, type TeamMember, type InfrastructureConfig } from "@/lib/api"
+import { getUserRole, hasPermission } from "@/lib/permissions"
 
 const MAPBOX_KEY = "mapbox_key"
 const MAP_CENTER_LAT = "map_center_lat"
@@ -76,6 +77,12 @@ export default function SettingsPage() {
     emailOnProposalApproval: true,
     weeklySummaryReport: false,
   })
+
+  const [role, setRole] = useState("sales_associate")
+
+  useEffect(() => {
+    setRole(getUserRole())
+  }, [])
 
   const loadTeam = () => {
     setLoading(true)
@@ -208,142 +215,171 @@ export default function SettingsPage() {
         </TabsList>
 
         <TabsContent value="team" className="space-y-4">
-          <Card>
-            <CardHeader>
-              <div className="flex items-center justify-between">
-                <div>
-                  <CardTitle>Sales Team Management</CardTitle>
-                  <CardDescription>Manage team members and their access</CardDescription>
-                </div>
-                <Button className="bg-[#387F43] hover:bg-[#2d6535]" onClick={() => setAddOpen(true)}>
-                  + Add Team Member
-                </Button>
-              </div>
-            </CardHeader>
-            <CardContent>
-              {loading ? (
-                <p className="text-sm text-muted-foreground">Loading…</p>
-              ) : (
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead>Name</TableHead>
-                      <TableHead>Email</TableHead>
-                      <TableHead>Role</TableHead>
-                      <TableHead>Status</TableHead>
-                      <TableHead className="text-right">Actions</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {team.map((user) => (
-                      <TableRow key={user._id}>
-                        <TableCell className="font-medium">{user.name}</TableCell>
-                        <TableCell>{user.email}</TableCell>
-                        <TableCell>
-                          {editingId === user._id ? (
-                            <select
-                              value={editRole}
-                              onChange={(e) => setEditRole(e.target.value as "admin" | "user")}
-                              className="border rounded px-2 py-1 text-sm"
-                            >
-                              <option value="user">user</option>
-                              <option value="admin">admin</option>
-                            </select>
-                          ) : (
-                            user.role
-                          )}
-                        </TableCell>
-                        <TableCell>
-                          {editingId === user._id ? (
-                            <select
-                              value={editStatus}
-                              onChange={(e) => setEditStatus(e.target.value as "active" | "inactive")}
-                              className="border rounded px-2 py-1 text-sm"
-                            >
-                              <option value="active">active</option>
-                              <option value="inactive">inactive</option>
-                            </select>
-                          ) : (
-                            <span
-                              className={`inline-flex px-2 py-1 rounded-full text-xs font-medium ${
-                                user.status === "active"
-                                  ? "bg-green-100 text-green-800"
-                                  : "bg-gray-100 text-gray-800"
-                              }`}
-                            >
-                              {user.status}
-                            </span>
-                          )}
-                        </TableCell>
-                        <TableCell className="text-right space-x-2">
-                          {editingId === user._id ? (
-                            <>
-                              <Button size="sm" onClick={handleSaveEdit}>
-                                Save
-                              </Button>
-                              <Button size="sm" variant="outline" onClick={() => setEditingId(null)}>
-                                Cancel
-                              </Button>
-                            </>
-                          ) : (
-                            <>
-                              <Button size="sm" variant="outline" onClick={() => handleEdit(user)}>
-                                Edit
-                              </Button>
-                              <Button
-                                size="sm"
-                                variant="outline"
-                                className="text-red-600 bg-transparent hover:bg-red-50"
-                                onClick={() => setRemoveId(user._id)}
-                              >
-                                Remove
-                              </Button>
-                            </>
-                          )}
-                        </TableCell>
-                      </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
-              )}
-            </CardContent>
-          </Card>
+          {hasPermission(role, "canManageTeam") ? (
+            <>
+              <Card>
+                <CardHeader>
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <CardTitle>Sales Team Management</CardTitle>
+                      <CardDescription>Manage team members and their access</CardDescription>
+                    </div>
+                    <Button
+                      className="bg-[#387F43] hover:bg-[#2d6535]"
+                      onClick={() => setAddOpen(true)}
+                    >
+                      + Add Team Member
+                    </Button>
+                  </div>
+                </CardHeader>
+                <CardContent>
+                  {loading ? (
+                    <p className="text-sm text-muted-foreground">Loading…</p>
+                  ) : (
+                    <Table>
+                      <TableHeader>
+                        <TableRow>
+                          <TableHead>Name</TableHead>
+                          <TableHead>Email</TableHead>
+                          <TableHead>Role</TableHead>
+                          <TableHead>Status</TableHead>
+                          <TableHead className="text-right">Actions</TableHead>
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        {team.map((user) => (
+                          <TableRow key={user._id}>
+                            <TableCell className="font-medium">{user.name}</TableCell>
+                            <TableCell>{user.email}</TableCell>
+                            <TableCell>
+                              {editingId === user._id ? (
+                                <select
+                                  value={editRole}
+                                  onChange={(e) => setEditRole(e.target.value as "admin" | "user")}
+                                  className="border rounded px-2 py-1 text-sm"
+                                >
+                                  <option value="user">user</option>
+                                  <option value="admin">admin</option>
+                                </select>
+                              ) : (
+                                user.role
+                              )}
+                            </TableCell>
+                            <TableCell>
+                              {editingId === user._id ? (
+                                <select
+                                  value={editStatus}
+                                  onChange={(e) =>
+                                    setEditStatus(e.target.value as "active" | "inactive")
+                                  }
+                                  className="border rounded px-2 py-1 text-sm"
+                                >
+                                  <option value="active">active</option>
+                                  <option value="inactive">inactive</option>
+                                </select>
+                              ) : (
+                                <span
+                                  className={`inline-flex px-2 py-1 rounded-full text-xs font-medium ${
+                                    user.status === "active"
+                                      ? "bg-green-100 text-green-800"
+                                      : "bg-gray-100 text-gray-800"
+                                  }`}
+                                >
+                                  {user.status}
+                                </span>
+                              )}
+                            </TableCell>
+                            <TableCell className="text-right space-x-2">
+                              {editingId === user._id ? (
+                                <>
+                                  <Button size="sm" onClick={handleSaveEdit}>
+                                    Save
+                                  </Button>
+                                  <Button
+                                    size="sm"
+                                    variant="outline"
+                                    onClick={() => setEditingId(null)}
+                                  >
+                                    Cancel
+                                  </Button>
+                                </>
+                              ) : (
+                                <>
+                                  <Button
+                                    size="sm"
+                                    variant="outline"
+                                    onClick={() => handleEdit(user)}
+                                  >
+                                    Edit
+                                  </Button>
+                                  <Button
+                                    size="sm"
+                                    variant="outline"
+                                    className="text-red-600 bg-transparent hover:bg-red-50"
+                                    onClick={() => setRemoveId(user._id)}
+                                  >
+                                    Remove
+                                  </Button>
+                                </>
+                              )}
+                            </TableCell>
+                          </TableRow>
+                        ))}
+                      </TableBody>
+                    </Table>
+                  )}
+                </CardContent>
+              </Card>
 
-          <Card>
-            <CardHeader>
-              <CardTitle>Role Permissions</CardTitle>
-              <CardDescription>Configure access levels for different roles</CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              <div className="flex items-center justify-between p-4 border rounded-lg">
-                <div>
-                  <p className="font-medium">Sales Director</p>
-                  <p className="text-sm text-muted-foreground">Full access to all features</p>
-                </div>
-                <span className="text-xs font-semibold bg-green-100 text-green-800 px-3 py-1 rounded-full">
-                  Admin
-                </span>
-              </div>
-              <div className="flex items-center justify-between p-4 border rounded-lg">
-                <div>
-                  <p className="font-medium">Field Evaluator</p>
-                  <p className="text-sm text-muted-foreground">Draw boundaries, create site evaluations</p>
-                </div>
-                <span className="text-xs font-semibold bg-blue-100 text-blue-800 px-3 py-1 rounded-full">
-                  Editor
-                </span>
-              </div>
-              <div className="flex items-center justify-between p-4 border rounded-lg">
-                <div>
-                  <p className="font-medium">Sales Associate</p>
-                  <p className="text-sm text-muted-foreground">View and download reports</p>
-                </div>
-                <span className="text-xs font-semibold bg-gray-100 text-gray-800 px-3 py-1 rounded-full">
-                  Viewer
-                </span>
-              </div>
-            </CardContent>
-          </Card>
+              <Card>
+                <CardHeader>
+                  <CardTitle>Role Permissions</CardTitle>
+                  <CardDescription>Configure access levels for different roles</CardDescription>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                  <div className="flex items-center justify-between p-4 border rounded-lg">
+                    <div>
+                      <p className="font-medium">Sales Director</p>
+                      <p className="text-sm text-muted-foreground">Full access to all features</p>
+                    </div>
+                    <span className="text-xs font-semibold bg-green-100 text-green-800 px-3 py-1 rounded-full">
+                      Admin
+                    </span>
+                  </div>
+                  <div className="flex items-center justify-between p-4 border rounded-lg">
+                    <div>
+                      <p className="font-medium">Field Evaluator</p>
+                      <p className="text-sm text-muted-foreground">
+                        Draw boundaries, create site evaluations
+                      </p>
+                    </div>
+                    <span className="text-xs font-semibold bg-blue-100 text-blue-800 px-3 py-1 rounded-full">
+                      Editor
+                    </span>
+                  </div>
+                  <div className="flex items-center justify-between p-4 border rounded-lg">
+                    <div>
+                      <p className="font-medium">Sales Associate</p>
+                      <p className="text-sm text-muted-foreground">View and download reports</p>
+                    </div>
+                    <span className="text-xs font-semibold bg-gray-100 text-gray-800 px-3 py-1 rounded-full">
+                      Viewer
+                    </span>
+                  </div>
+                </CardContent>
+              </Card>
+            </>
+          ) : (
+            <Card>
+              <CardHeader>
+                <CardTitle>Team Management</CardTitle>
+                <CardDescription>
+                  You don't have permission to manage team members. Please contact your
+                  administrator.
+                </CardDescription>
+              </CardHeader>
+            </Card>
+          )}
         </TabsContent>
 
         <TabsContent value="map" className="space-y-4">

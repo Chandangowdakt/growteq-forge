@@ -8,6 +8,7 @@ import {
   getSiteGeojsonExport,
 } from "../controllers/siteEvaluationController"
 import { authMiddleware } from "../middleware/auth"
+import { requireRole } from "../middleware/roleMiddleware"
 
 const router: IRouter = Router()
 
@@ -61,8 +62,28 @@ router.post("/", async (req, res, next) => {
   }
 })
 
+router.get("/:siteId", async (req, res, next) => {
+  try {
+    const site = await Site.findById(req.params.siteId)
+    if (!site) {
+      return res.status(404).json({ success: false, error: "Not found" })
+    }
+    const data = site.toObject()
+    return res.json({ success: true, data })
+  } catch (err) {
+    next(err)
+  }
+})
+
 router.put("/:id", updateSiteEvaluation)
-router.delete("/:id", deleteSiteEvaluation)
+router.delete("/:siteId", requireRole("admin"), async (req, res, next) => {
+  try {
+    await Site.findByIdAndDelete(req.params.siteId)
+    return res.json({ success: true, data: true })
+  } catch (err) {
+    next(err)
+  }
+})
 router.get("/:siteId/details", getSiteDetails)
 router.get("/:siteId/boundary", getSiteBoundary)
 router.get("/:siteId/export", getSiteGeojsonExport)

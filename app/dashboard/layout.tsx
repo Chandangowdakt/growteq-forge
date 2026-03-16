@@ -115,12 +115,15 @@ export default function DashboardLayoutWrapper({
           <div className="flex flex-col flex-1 pt-5 bg-[#387F43] text-white">
             <div
               className={cn(
-                "flex flex-col items-center mb-5",
+                "flex flex-col items-start mb-5",
                 isExpanded ? "px-4" : "px-2"
               )}
             >
-              <span className="text-xl font-bold text-white">growteq</span>
-              {isExpanded && <span className="text-xs text-white/80 mt-0.5">AGRI FARMS PVT LTD</span>}
+              <img
+                src="/images/growteq-logo.svg"
+                alt="growteq"
+                className="h-10 w-auto"
+              />
             </div>
 
             <div

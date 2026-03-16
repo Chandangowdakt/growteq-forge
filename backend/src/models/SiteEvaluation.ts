@@ -20,6 +20,9 @@ export interface ISiteEvaluation extends Document {
   slope?: number
   areaUnit?: string
   infrastructureRecommendation?: string
+  numberOfUnits?: number
+  cropType?: string
+  calculatedInvestment?: number
   createdAt: Date
   updatedAt: Date
 }
@@ -41,6 +44,9 @@ const siteEvaluationSchema = new Schema<ISiteEvaluation>(
     slope: { type: Number, min: 0 },
     areaUnit: { type: String, trim: true },
     infrastructureRecommendation: { type: String, trim: true },
+    numberOfUnits: { type: Number, default: 1 },
+    cropType: { type: String, trim: true },
+    calculatedInvestment: { type: Number },
   },
   { timestamps: true }
 )

@@ -54,11 +54,12 @@ export default function RegisterPage() {
   return (
     <div className="min-h-screen flex items-center justify-center bg-gray-50 p-4">
       <div className="w-full max-w-md">
-        <div className="mb-8 text-center">
-          <h1 className="text-3xl font-bold tracking-tight" style={{ color: BRAND_GREEN }}>
-            growteq
-          </h1>
-          <p className="text-sm text-muted-foreground mt-1">AGRI FARMS PVT LTD</p>
+        <div className="flex justify-center mb-8">
+          <img
+            src="/images/growteq-logo.svg"
+            alt="Growteq Agri Farms Pvt Ltd"
+            className="h-16 w-auto"
+          />
         </div>
 
         <div className="bg-white rounded-xl shadow-md border p-8">
