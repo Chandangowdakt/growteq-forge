@@ -175,7 +175,8 @@ export default function SiteDetailPage() {
     setDeleting(true)
     try {
       const token = localStorage.getItem("forge_token")
-      const res = await fetch(`${baseURL}/api/sites/${site._id}`, {
+      const apiUrl = process.env.NEXT_PUBLIC_API_URL || "http://localhost:5000"
+      const res = await fetch(`${apiUrl}/api/sites/${site._id}`, {
         method: "DELETE",
         headers: {
           "Content-Type": "application/json",
@@ -202,7 +203,8 @@ export default function SiteDetailPage() {
     setSaving(true)
     try {
       const token = localStorage.getItem("forge_token")
-      const res = await fetch(`${baseURL}/api/sites/${siteId}`, {
+      const apiUrl = process.env.NEXT_PUBLIC_API_URL || "http://localhost:5000"
+      const res = await fetch(`${apiUrl}/api/sites/${siteId}`, {
         method: "PATCH",
         headers: {
           "Content-Type": "application/json",
