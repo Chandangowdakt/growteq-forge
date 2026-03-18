@@ -10,7 +10,8 @@
     "resolveJsonModule": true,
     "types": ["node"],
     "skipLibCheck": true,
-    "noEmitOnError": false
+    "noEmitOnError": false,
+    "jsx": "react"
   },
   "include": ["src"],
   "exclude": ["node_modules", "src/generated"]

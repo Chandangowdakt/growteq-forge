@@ -177,10 +177,20 @@ export default function OverviewPage() {
           {revenueTrend.length > 0 ? (
             <div className="h-80">
               <ResponsiveContainer width="100%" height="100%">
-                <BarChart data={revenueTrend}>
+                <BarChart
+                  data={revenueTrend}
+                  margin={{ top: 10, right: 30, left: 80, bottom: 0 }}
+                >
                   <CartesianGrid strokeDasharray="3 3" />
                   <XAxis dataKey="month" />
-                  <YAxis />
+                  <YAxis
+                    width={70}
+                    tickFormatter={(value: number) =>
+                      value >= 100000
+                        ? `₹${(value / 100000).toFixed(0)}L`
+                        : `₹${value.toLocaleString("en-IN")}`
+                    }
+                  />
                   <Tooltip formatter={(value: number) => [`₹${Number(value).toLocaleString("en-IN")}`, "Value"]} />
                   <Bar dataKey="value" fill="#387F43" name="Investment (₹)" />
                 </BarChart>

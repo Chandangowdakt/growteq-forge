@@ -10,6 +10,7 @@
     "seed": "tsx src/seed.ts"
   },
   "dependencies": {
+    "@react-pdf/renderer": "^4.3.2",
     "bcryptjs": "^2.4.3",
     "cors": "^2.8.5",
     "dotenv": "^16.4.5",
@@ -17,7 +18,8 @@
     "jsonwebtoken": "^9.0.2",
     "jspdf": "^4.2.0",
     "mongoose": "^8.3.3",
-    "pdfkit": "^0.17.2"
+    "pdfkit": "^0.17.2",
+    "sharp": "^0.34.5"
   },
   "devDependencies": {
     "@types/bcryptjs": "^2.4.6",

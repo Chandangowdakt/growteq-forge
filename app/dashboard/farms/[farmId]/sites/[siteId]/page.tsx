@@ -31,6 +31,8 @@ interface LeafletMapProps {
   onBoundaryChange: (points: BoundaryPoint[], area: number) => void
   isFullscreen: boolean
   onExitFullscreen: () => void
+  initialCenter?: { lat: number; lng: number } | null
+  initialBoundary?: BoundaryPoint[]
 }
 
 // Reuse farms map in read-only mode
@@ -55,6 +57,7 @@ export default function SiteDetailPage() {
   const [loading, setLoading] = useState(true)
   const [deleting, setDeleting] = useState(false)
   const [editing, setEditing] = useState(false)
+  const [saving, setSaving] = useState(false)
   const [editName, setEditName] = useState("")
   const [editNotes, setEditNotes] = useState("")
   const [boundary, setBoundary] = useState<BoundaryPoint[]>([])
@@ -78,58 +81,87 @@ export default function SiteDetailPage() {
     }
   }, [site?.status])
 
-  const baseURL =
-    (typeof process !== "undefined" && process.env.NEXT_PUBLIC_API_URL) || "http://localhost:5000"
-
   const load = useCallback(async () => {
     if (!siteId) return
     setLoading(true)
     try {
-      const token =
-        typeof window !== "undefined" ? localStorage.getItem("forge_token") : null
-      const res = await fetch(`${baseURL}/api/sites/${siteId}`, {
+      console.log("Loading site:", siteId)
+      const token = typeof window !== "undefined" ? localStorage.getItem("forge_token") : null
+      const apiUrl = process.env.NEXT_PUBLIC_API_URL || "http://localhost:5000"
+      console.log("API URL:", apiUrl)
+      console.log("Token exists:", !!token)
+
+      const response = await fetch(`${apiUrl}/api/sites/${siteId}`, {
         headers: {
+          Authorization: token ? `Bearer ${token}` : "",
           "Content-Type": "application/json",
-          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+          "Cache-Control": "no-cache",
         },
       })
-      if (!res.ok) {
-        throw new Error("Failed to load site")
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}`)
       }
-      const json = await res.json()
-      const data: SiteResponse | undefined = json?.data
-      if (!data) throw new Error("Site not found")
-      setSite(data)
-      setEditName(data.name)
-      setEditNotes(data.notes ?? "")
+      const json = await response.json()
+      if (!json.success) {
+        throw new Error(json.error || "Failed to load site")
+      }
+      const siteData: SiteResponse | undefined = json.data
+      if (!siteData) {
+        throw new Error("Site not found")
+      }
 
-      if (data.geojson?.type === "Polygon" && Array.isArray(data.geojson.coordinates?.[0])) {
-        const ring = data.geojson.coordinates[0]
-        const points: BoundaryPoint[] = ring
-          .slice(0, -1) // last equals first
-          .map((coord, idx) => ({
-            lng: coord[0],
-            lat: coord[1],
-            id: `p-${idx}`,
+      setSite(siteData)
+      setEditName(siteData.name || "")
+      setEditNotes(siteData.notes || "")
+
+      if (siteData.geojson?.coordinates?.[0]) {
+        const pts: BoundaryPoint[] = siteData.geojson.coordinates[0]
+          .slice(0, -1)
+          .map((c: number[], i: number) => ({
+            id: `p-${i}`,
+            lat: c[1],
+            lng: c[0],
           }))
-        setBoundary(points)
+        setBoundary(pts)
       } else {
         setBoundary([])
       }
-    } catch (err) {
-      console.error(err)
+    } catch (err: any) {
+      console.error("Site load error:", err?.message || err)
       toast({
         title: "Failed to load site",
-        description: "Please try again.",
+        description: err?.message || "Please try again.",
         variant: "destructive",
       })
     } finally {
       setLoading(false)
     }
-  }, [baseURL, siteId])
+  }, [siteId])
 
   useEffect(() => {
     load()
+  }, [load])
+  const mapCenter =
+    boundary.length > 0
+      ? {
+          lat: boundary.reduce((s, p) => s + p.lat, 0) / boundary.length,
+          lng: boundary.reduce((s, p) => s + p.lng, 0) / boundary.length,
+        }
+      : null
+
+  useEffect(() => {
+    // Force fresh fetch every time this page mounts/navigation changes siteId
+    setLoading(true)
+    load()
+  }, [siteId])
+
+  useEffect(() => {
+    if (typeof window === "undefined") return
+    const handleFocus = () => {
+      load()
+    }
+    window.addEventListener("focus", handleFocus)
+    return () => window.removeEventListener("focus", handleFocus)
   }, [load])
 
   const handleDelete = async () => {
@@ -167,6 +199,7 @@ export default function SiteDetailPage() {
   const handleEditSave = async () => {
     if (!siteId) return
     setEditing(true)
+    setSaving(true)
     try {
       const token = localStorage.getItem("forge_token")
       const res = await fetch(`${baseURL}/api/sites/${siteId}`, {
@@ -192,6 +225,7 @@ export default function SiteDetailPage() {
       })
     } finally {
       setEditing(false)
+      setSaving(false)
     }
   }
 
@@ -245,9 +279,9 @@ export default function SiteDetailPage() {
                 variant="outline"
                 size="sm"
                 onClick={handleEditSave}
-                disabled={editing}
+                disabled={saving}
               >
-                {editing ? "Saving…" : "Save Changes"}
+                {saving ? "Saving..." : "Save Changes"}
               </Button>
               {hasPermission(role, "canDeleteSite") && (
                 <Button
@@ -277,7 +311,10 @@ export default function SiteDetailPage() {
                 ) : (
                   <div className="h-80 w-full overflow-hidden rounded-lg border">
                     <LeafletMap
+                      readOnly={true}
                       boundary={boundary}
+                      initialBoundary={boundary}
+                      initialCenter={mapCenter}
                       // Keep area from parent; ignore edits in detail page
                       onBoundaryChange={() => {}}
                       isFullscreen={false}

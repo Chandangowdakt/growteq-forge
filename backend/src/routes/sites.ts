@@ -1,92 +1,66 @@
-import { Router, type IRouter } from "express"
+import { Router } from "express"
+import { authMiddleware as authenticateToken } from "../middleware/auth"
 import { Site } from "../models/Site"
-import {
-  updateSiteEvaluation,
-  deleteSiteEvaluation,
-  getSiteDetails,
-  getSiteBoundary,
-  getSiteGeojsonExport,
-} from "../controllers/siteEvaluationController"
-import { authMiddleware } from "../middleware/auth"
-import { requireRole } from "../middleware/roleMiddleware"
 
-const router: IRouter = Router()
+const router = Router()
 
-router.use(authMiddleware)
-
-router.post("/", async (req, res, next) => {
+// POST / — create site
+router.post("/", authenticateToken, async (req, res) => {
   try {
-    const { farmId, name, geojson, area, perimeter, slope, notes } = req.body as {
-      farmId?: unknown
-      name?: unknown
-      geojson?: unknown
-      area?: unknown
-      perimeter?: unknown
-      slope?: unknown
-      notes?: unknown
-    }
-
-    if (typeof name !== "string" || !name.trim()) {
-      return res.status(400).json({ success: false, message: "name is required" })
-    }
-
-    if (typeof geojson !== "object" || geojson === null) {
-      return res.status(400).json({ success: false, message: "geojson is required" })
-    }
-
-    if (typeof area !== "number" || !Number.isFinite(area)) {
-      return res.status(400).json({ success: false, message: "area must be a number" })
-    }
-
-    if (typeof perimeter !== "number" || !Number.isFinite(perimeter)) {
-      return res.status(400).json({ success: false, message: "perimeter must be a number" })
-    }
-
-    const createdSite = await Site.create({
-      name: name.trim(),
-      geojson,
-      area,
-      perimeter,
-      ...(farmId != null && { farmId }),
-      ...(typeof slope === "number" && Number.isFinite(slope) && { slope }),
-      ...(typeof notes === "string" && { notes: notes.trim() }),
-    })
-
-    const data = createdSite.toObject()
-    return res.status(201).json({
-      success: true,
-      data: { ...data, id: createdSite._id },
-    })
-  } catch (err) {
-    next(err)
+    const { farmId, name, geojson, area, perimeter, slope, notes } = req.body
+    const site = await Site.create({ farmId, name, geojson, area, perimeter, slope, notes })
+    return res.json({ success: true, data: { ...site.toObject(), id: site._id } })
+  } catch (err: any) {
+    return res.status(500).json({ success: false, error: err.message })
   }
 })
 
-router.get("/:siteId", async (req, res, next) => {
+// GET /:siteId — get single site by ID
+router.get("/:siteId", authenticateToken, async (req, res) => {
   try {
     const site = await Site.findById(req.params.siteId)
     if (!site) {
-      return res.status(404).json({ success: false, error: "Not found" })
+      return res.status(404).json({ success: false, error: "Site not found" })
     }
-    const data = site.toObject()
-    return res.json({ success: true, data })
-  } catch (err) {
-    next(err)
+    return res.json({ success: true, data: site })
+  } catch (err: any) {
+    console.error("GET /api/sites/:siteId error:", err.message)
+    return res.status(500).json({ success: false, error: err.message })
   }
 })
 
-router.put("/:id", updateSiteEvaluation)
-router.delete("/:siteId", requireRole("admin"), async (req, res, next) => {
+// PATCH /:siteId — update site name/notes/status
+router.patch("/:siteId", authenticateToken, async (req, res) => {
+  try {
+    const { name, notes, status } = req.body as {
+      name?: string
+      notes?: string
+      status?: string
+    }
+    const update: Record<string, unknown> = {}
+    if (name !== undefined) update.name = name
+    if (notes !== undefined) update.notes = notes
+    if (status !== undefined) update.status = status
+    const site = await Site.findByIdAndUpdate(
+      req.params.siteId,
+      { $set: update },
+      { new: true }
+    )
+    return res.json({ success: true, data: site })
+  } catch (err: any) {
+    return res.status(500).json({ success: false, error: err.message })
+  }
+})
+
+// DELETE /:siteId — delete site
+router.delete("/:siteId", authenticateToken, async (req, res) => {
   try {
     await Site.findByIdAndDelete(req.params.siteId)
     return res.json({ success: true, data: true })
-  } catch (err) {
-    next(err)
+  } catch (err: any) {
+    return res.status(500).json({ success: false, error: err.message })
   }
 })
-router.get("/:siteId/details", getSiteDetails)
-router.get("/:siteId/boundary", getSiteBoundary)
-router.get("/:siteId/export", getSiteGeojsonExport)
 
 export default router
 

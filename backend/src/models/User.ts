@@ -1,13 +1,13 @@
 import mongoose, { Document, Schema } from "mongoose"
 import bcrypt from "bcryptjs"
 
-export type Role = "admin" | "user"
+export type Role = "admin" | "field_evaluator" | "sales_associate"
 
 export interface IUser extends Document {
   email: string
   password: string
   name: string
-  role: Role
+  role?: Role
   isActive?: boolean
   createdAt: Date
   updatedAt: Date
@@ -19,7 +19,11 @@ const userSchema = new Schema<IUser>(
     email: { type: String, required: true, unique: true, lowercase: true, trim: true },
     password: { type: String, required: true, minlength: 6, select: false },
     name: { type: String, required: true, trim: true },
-    role: { type: String, enum: ["admin", "user"], default: "user" },
+    role: {
+      type: String,
+      enum: ["admin", "field_evaluator", "sales_associate"],
+      default: "sales_associate",
+    },
     isActive: { type: Boolean, default: true },
   },
   { timestamps: true }

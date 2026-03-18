@@ -1,5 +1,8 @@
 import express from "express"
 import cors from "cors"
+import fs from "fs"
+import path from "path"
+import sharp from "sharp"
 import { connectDb } from "./config/db"
 import { errorHandler } from "./middleware/errorHandler"
 import { requestLogger } from "./middleware/requestLogger"
@@ -28,6 +31,60 @@ if (!process.env.MONGODB_URI) {
   process.exit(1)
 }
 
+function copyLogoForPDF() {
+  // Paths relative to project structure
+  const sources = [
+    path.join(process.cwd(), "public/images/growteq-logo.svg"),
+    path.join(__dirname, "../../../public/images/growteq-logo.svg"),
+    path.join(__dirname, "../../public/images/growteq-logo.svg"),
+  ]
+
+  const destDir = path.join(process.cwd(), "backend/public/images")
+  const destPNG = path.join(destDir, "growteq-logo.png")
+  const destSVG = path.join(destDir, "growteq-logo.svg")
+
+  if (!fs.existsSync(destDir)) {
+    fs.mkdirSync(destDir, { recursive: true })
+  }
+
+  // If PNG already exists, skip heavy work
+  if (fs.existsSync(destPNG)) {
+    console.log("✓ PDF logo PNG exists:", destPNG)
+    return
+  }
+
+  for (const src of sources) {
+    if (fs.existsSync(src)) {
+      console.log("Found logo SVG at:", src)
+      try {
+        fs.copyFileSync(src, destSVG)
+        console.log("Copied SVG to:", destSVG)
+      } catch (e: any) {
+        console.error("Copy SVG failed:", e.message)
+      }
+
+      try {
+        sharp(src)
+          .resize(300, 75, {
+            fit: "contain",
+            background: { r: 45, g: 101, b: 53, alpha: 0 },
+          })
+          .png()
+          .toFile(destPNG)
+          .then(() => console.log("✓ Logo PNG created:", destPNG))
+          .catch((e: any) => console.error("Sharp failed:", e.message))
+      } catch (e: any) {
+        console.error("Sharp not available:", e.message)
+      }
+      return
+    }
+  }
+
+  console.log("✗ Logo SVG not found in any location")
+  console.log("CWD:", process.cwd())
+  console.log("__dirname:", __dirname)
+}
+
 const app = express()
 
 const PORT = Number(process.env.PORT || 5000)
@@ -38,7 +95,7 @@ app.use(
     origin: [frontendUrl, "http://localhost:3000"],
     credentials: true,
     methods: ["GET", "POST", "PATCH", "PUT", "DELETE", "OPTIONS"],
-    allowedHeaders: ["Content-Type", "Authorization"],
+    allowedHeaders: ["Content-Type", "Authorization", "Cache-Control"],
   })
 )
 app.use(express.json())
@@ -90,6 +147,7 @@ function startServer(port: number): void {
 
 async function start() {
   await connectDb()
+  copyLogoForPDF()
   startServer(PORT)
 }
 

@@ -131,6 +131,9 @@ export default function NewSiteEvaluationPage() {
       const slopeValue = Number(slope)
       const units = Math.max(1, numberOfUnits || 0)
 
+      console.log("Submitting evaluation with siteId:", siteId)
+      console.log("Submitting evaluation with farmId:", farmId)
+
       const res = await siteEvaluationsApi.create({
         siteId,
         farmId,
@@ -151,7 +154,8 @@ export default function NewSiteEvaluationPage() {
           title: "Evaluation submitted!",
           description: `Investment: ${formatINR(totalInvestment || 0)} | ROI: ${cfg.roiMonths} months`,
         })
-        router.push(`/dashboard/farms/${farmId}/sites/${siteId}`)
+        // Force hard navigation to ensure fresh data
+        window.location.href = `/dashboard/farms/${farmId}/sites/${siteId}`
       }
     } catch (err) {
       console.error(err)

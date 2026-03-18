@@ -18,7 +18,7 @@ const REPORT_TYPE_LABELS: Record<string, string> = {
 export default function ReportsPage() {
   const [list, setList] = useState<ReportTypeItem[]>([])
   const [loading, setLoading] = useState(true)
-  const [generating, setGenerating] = useState<{ type: string; format: string } | null>(null)
+  const [generating, setGenerating] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
 
   const loadList = () => {
@@ -39,8 +39,7 @@ export default function ReportsPage() {
     loadList()
   }, [])
 
-  const handleDownload = async (reportType: string, format: "pdf" | "excel") => {
-    setGenerating({ type: reportType, format })
+  const handleGenerate = async (reportType: string, format: "pdf" | "excel") => {
     setError(null)
     try {
       const res = await reportsApi.generate({ reportType, format })
@@ -66,8 +65,6 @@ export default function ReportsPage() {
       URL.revokeObjectURL(objectUrl)
     } catch (err) {
       setError(err instanceof Error ? err.message : "Generate failed")
-    } finally {
-      setGenerating(null)
     }
   }
 
@@ -96,10 +93,20 @@ export default function ReportsPage() {
         </div>
       </div>
 
-      {error && (
+      {error && list.length === 0 && (
+        <div className="bg-yellow-50 border border-yellow-200 rounded p-4 mb-4">
+          <p className="text-yellow-800 font-medium">No reports available yet</p>
+          <p className="text-yellow-600 text-sm mt-1">
+            Complete a site evaluation first, then generate reports here.
+          </p>
+        </div>
+      )}
+      {error && list.length > 0 && (
         <div className="p-4 text-red-600 flex items-center gap-2">
           <span>{error}</span>
-          <Button variant="outline" size="sm" onClick={loadList}>Retry</Button>
+          <Button variant="outline" size="sm" onClick={loadList}>
+            Retry
+          </Button>
         </div>
       )}
 
@@ -128,21 +135,34 @@ export default function ReportsPage() {
                 <Button
                   size="sm"
                   className="flex-1 bg-[#387F43] hover:bg-[#2d6535]"
-                  onClick={() => handleDownload(reportType, "pdf")}
-                  disabled={generating?.type === reportType && generating?.format === "pdf"}
+                  onClick={async () => {
+                    setGenerating(reportType)
+                    try {
+                      await handleGenerate(reportType, "pdf")
+                    } finally {
+                      setGenerating(null)
+                    }
+                  }}
+                  disabled={generating === reportType}
                 >
-                  <Download className="h-3 w-3 mr-1" />
-                  {generating?.type === reportType && generating?.format === "pdf" ? "…" : "PDF"}
+                  {generating === reportType ? (
+                    <span className="flex items-center gap-2">
+                      <span className="animate-spin">⏳</span> Generating...
+                    </span>
+                  ) : (
+                    <span className="flex items-center gap-2">
+                      <Download className="h-4 w-4" /> PDF
+                    </span>
+                  )}
                 </Button>
                 <Button
                   size="sm"
                   variant="outline"
                   className="flex-1"
-                  onClick={() => handleDownload(reportType, "excel")}
-                  disabled={generating?.type === reportType && generating?.format === "excel"}
+                  onClick={() => handleGenerate(reportType, "excel")}
                 >
                   <Download className="h-3 w-3 mr-1" />
-                  {generating?.type === reportType && generating?.format === "excel" ? "…" : "Excel"}
+                  Excel
                 </Button>
               </div>
             </CardContent>

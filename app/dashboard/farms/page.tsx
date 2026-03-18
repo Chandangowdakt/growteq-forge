@@ -99,6 +99,30 @@ export default function FarmsPage() {
     fetchFarms()
   }, [fetchFarms])
 
+  const handleSelectFarm = (farmId: string | null) => {
+    setSelectedFarmId(farmId)
+    if (typeof window !== "undefined") {
+      if (farmId) {
+        localStorage.setItem("lastSelectedFarmId", farmId)
+      } else {
+        localStorage.removeItem("lastSelectedFarmId")
+      }
+    }
+  }
+
+  useEffect(() => {
+    if (typeof window === "undefined") return
+    if (!farms.length) return
+    if (selectedFarmId) return
+
+    const last = localStorage.getItem("lastSelectedFarmId")
+    if (last && farms.find((f) => f._id === last)) {
+      setSelectedFarmId(last)
+    } else {
+      setSelectedFarmId(farms[0]._id)
+    }
+  }, [farms, selectedFarmId])
+
   const fetchFarmSites = useCallback(async () => {
     if (!selectedFarmId) {
       setFarmSites([])
@@ -328,7 +352,7 @@ export default function FarmsPage() {
           )}
           <Select
             value={selectedFarmId ?? ''}
-            onValueChange={(v) => setSelectedFarmId(v || null)}
+            onValueChange={(v) => handleSelectFarm(v || null)}
             disabled={farmsLoading}
           >
             <SelectTrigger className="w-[220px]">

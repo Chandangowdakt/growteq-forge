@@ -8,6 +8,7 @@ export interface ISite extends Document {
   slope?: number
   notes?: string
   farmId?: mongoose.Types.ObjectId
+  status?: "draft" | "submitted" | "approved" | "rejected"
   createdAt: Date
   updatedAt: Date
 }
@@ -21,6 +22,11 @@ const siteSchema = new Schema<ISite>(
     slope: { type: Number, min: 0 },
     notes: { type: String, trim: true },
     farmId: { type: Schema.Types.ObjectId, ref: "Farm" },
+    status: {
+      type: String,
+      enum: ["draft", "submitted", "approved", "rejected"],
+      default: "draft",
+    },
   },
   { timestamps: true }
 )

@@ -37,8 +37,11 @@ export default function InsightsPage() {
   const [roiDistribution, setRoiDistribution] = useState<{ month: number; polyhouse: number; shade_net: number; open_field: number }[]>([])
   const [pipelineValue, setPipelineValue] = useState<number>(0)
   const [error, setError] = useState<string | null>(null)
+  const [loading, setLoading] = useState(true)
 
-  useEffect(() => {
+  const loadData = () => {
+    setError(null)
+    setLoading(true)
     let cancelled = false
     Promise.all([
       insightsApi.pipeline(),
@@ -66,9 +69,22 @@ export default function InsightsPage() {
         }
       })
       .catch((err) => {
-        if (!cancelled) setError(err instanceof Error ? err.message : "Failed to load insights")
+        if (!cancelled) {
+          setError(err instanceof Error ? err.message : "Failed to load insights")
+          console.error("Data load error:", err)
+        }
       })
-    return () => { cancelled = true }
+      .finally(() => {
+        if (!cancelled) setLoading(false)
+      })
+    return () => {
+      cancelled = true
+    }
+  }
+
+  useEffect(() => {
+    const cleanup = loadData()
+    return () => cleanup?.()
   }, [])
 
   const pipelineChartData = useMemo(() => {
@@ -119,10 +135,20 @@ export default function InsightsPage() {
         <p className="text-muted-foreground">
           Market analysis and predictive insights for site evaluation strategy
         </p>
-        {error && (
-          <p className="mt-1 text-sm text-red-600">Failed to load live analytics: {error}</p>
-        )}
       </div>
+
+      {error && (
+        <div className="bg-red-50 border border-red-200 rounded p-3 mb-4 text-sm text-red-700">
+          {error} —{" "}
+          <button onClick={loadData} className="underline">
+            Retry
+          </button>
+        </div>
+      )}
+
+      {loading && (
+        <div className="p-8 animate-pulse text-muted-foreground">Loading…</div>
+      )}
 
       <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
         <Card className="border-l-4 border-l-[#387F43]">

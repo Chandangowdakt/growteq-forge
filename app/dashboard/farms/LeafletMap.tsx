@@ -27,6 +27,19 @@ interface LeafletMapProps {
   onBoundaryChange: (points: BoundaryPoint[], areaAcres: number) => void
   isFullscreen: boolean
   onExitFullscreen: () => void
+  readOnly?: boolean
+  initialCenter?: { lat: number; lng: number } | null
+  initialBoundary?: BoundaryPoint[]
+}
+
+function FlyToCenter({ center }: { center: { lat: number; lng: number } | null }) {
+  const map = useMap()
+  useEffect(() => {
+    if (center) {
+      map.setView([center.lat, center.lng], 17, { animate: false })
+    }
+  }, [center?.lat, center?.lng, map])
+  return null
 }
 
 function ClickHandler({ onSelect }: { onSelect: (lat: number, lng: number) => void }) {
@@ -65,7 +78,37 @@ function FitToBounds({ points }: { points: BoundaryPoint[] }) {
   return null
 }
 
-export default function LeafletMap({ boundary, onBoundaryChange, isFullscreen, onExitFullscreen }: LeafletMapProps) {
+function FitBounds({ points }: { points: { lat: number; lng: number }[] }) {
+  const map = useMap()
+
+  useEffect(() => {
+    if (points && points.length >= 2) {
+      const lats = points.map((p) => p.lat)
+      const lngs = points.map((p) => p.lng)
+      const bounds: L.LatLngBoundsExpression = [
+        [Math.min(...lats), Math.min(...lngs)],
+        [Math.max(...lats), Math.max(...lngs)],
+      ]
+      map.fitBounds(bounds, {
+        padding: [40, 40],
+        animate: false,
+        maxZoom: 19,
+      })
+    }
+  }, [points.length])
+
+  return null
+}
+
+export default function LeafletMap({
+  boundary,
+  onBoundaryChange,
+  isFullscreen,
+  onExitFullscreen,
+  readOnly,
+  initialCenter,
+  initialBoundary,
+}: LeafletMapProps) {
   const [boundaryPoints, setBoundaryPoints] = useState<BoundaryPoint[]>(boundary)
   const [currentLocation, setCurrentLocation] = useState<LatLngExpression | null>(null)
   const [locating, setLocating] = useState(true)
@@ -94,13 +137,31 @@ export default function LeafletMap({ boundary, onBoundaryChange, isFullscreen, o
   }, [onBoundaryChange])
 
   useEffect(() => {
-    if (!navigator.geolocation) { setLocating(false); return }
+    if (initialCenter && mapRef.current) {
+      mapRef.current.setView([initialCenter.lat, initialCenter.lng], 16)
+    }
+  }, [initialCenter])
+
+  useEffect(() => {
+    // Only locate user for new site creation (no saved boundary / not read-only)
+    if (!navigator.geolocation) {
+      setLocating(false)
+      return
+    }
+    if (readOnly || (initialBoundary && initialBoundary.length > 0)) {
+      setLocating(false)
+      return
+    }
+
     navigator.geolocation.getCurrentPosition(
-      (pos) => { setCurrentLocation([pos.coords.latitude, pos.coords.longitude]); setLocating(false) },
+      (pos) => {
+        setCurrentLocation([pos.coords.latitude, pos.coords.longitude])
+        setLocating(false)
+      },
       () => setLocating(false),
       { timeout: 8000 }
     )
-  }, [])
+  }, [initialBoundary?.length])
 
   useEffect(() => { setBoundaryPoints(boundary) }, [boundary])
 
@@ -426,6 +487,8 @@ export default function LeafletMap({ boundary, onBoundaryChange, isFullscreen, o
         <SearchFlyTo target={searchTarget} />
         <MapResizer isFullscreen={isFullscreen} />
         <FitToBounds points={boundaryPoints} />
+        <FitBounds points={boundaryPoints} />
+        <FlyToCenter center={initialCenter ?? null} />
         <ScaleControl position="bottomleft" />
         <ZoomControl position="bottomleft" />
 
@@ -456,6 +519,60 @@ export default function LeafletMap({ boundary, onBoundaryChange, isFullscreen, o
           className="absolute top-4 right-4 z-[10000] bg-white text-black px-4 py-2 rounded-lg shadow-md">
           Exit Fullscreen
         </button>
+      )}
+
+      {isFullscreen && (
+        <div
+          style={{
+            position: "absolute",
+            bottom: "20px",
+            left: "50%",
+            transform: "translateX(-50%)",
+            zIndex: 1000,
+            display: "flex",
+            gap: "8px",
+          }}
+        >
+          <button
+            onClick={() => {
+              if (boundaryPoints.length === 0) return
+              setBoundaryPoints((prev) => {
+                const updated = prev.slice(0, -1)
+                const area = computeArea(updated)
+                onBoundaryChangeRef.current?.(updated, area)
+                return updated
+              })
+            }}
+            style={{
+              background: "white",
+              border: "1px solid #ccc",
+              borderRadius: "6px",
+              padding: "8px 16px",
+              cursor: "pointer",
+              fontSize: "13px",
+              boxShadow: "0 2px 4px rgba(0,0,0,0.2)",
+            }}
+          >
+            Undo Last Point
+          </button>
+          <button
+            onClick={() => {
+              setBoundaryPoints([])
+              onBoundaryChangeRef.current?.([], 0)
+            }}
+            style={{
+              background: "white",
+              border: "1px solid #ccc",
+              borderRadius: "6px",
+              padding: "8px 16px",
+              cursor: "pointer",
+              fontSize: "13px",
+              boxShadow: "0 2px 4px rgba(0,0,0,0.2)",
+            }}
+          >
+            Clear All Points
+          </button>
+        </div>
       )}
 
       <div className="pointer-events-none absolute left-4 top-4 z-[1000] space-y-2">
@@ -548,32 +665,54 @@ export default function LeafletMap({ boundary, onBoundaryChange, isFullscreen, o
       </div>
 
       <div className="pointer-events-none absolute right-4 bottom-4 z-[1000]">
-        {mapMode === "draw" ? (
-          <div className="pointer-events-auto rounded-xl bg-white/90 px-3 py-2 text-xs shadow-sm space-y-1">
-            <div className="flex justify-between gap-4">
-              <span className="text-muted-foreground">Points</span>
-              <span className="font-medium">{boundaryPoints.length}</span>
+        {mapMode === "draw" ? (() => {
+          const areaAcres = computeArea(boundaryPoints)
+          const perimeterMeters = computePerimeter(boundaryPoints)
+          const areaSqm = areaAcres > 0 ? areaAcres * 4047 : 0
+          const isValidPolygon = boundaryPoints.length >= 3 && areaAcres > 0.001
+          return (
+            <div className="pointer-events-auto rounded-xl bg-white/90 px-3 py-2 text-xs shadow-sm space-y-1">
+              <div className="flex justify-between gap-4">
+                <span className="text-muted-foreground">Points</span>
+                <span className="font-medium">{boundaryPoints.length}</span>
+              </div>
+              <div className="flex justify-between gap-4">
+                <span className="text-muted-foreground">Area</span>
+                <span className="font-medium">
+                  {areaAcres ? `${areaAcres} acres` : "—"}
+                </span>
+              </div>
+              <div className="flex justify-between gap-4">
+                <span className="text-muted-foreground">Area (m²)</span>
+                <span className="font-medium">
+                  {areaSqm
+                    ? `${Math.round(areaSqm).toLocaleString("en-IN")} m²`
+                    : "—"}
+                </span>
+              </div>
+              <div className="flex justify-between gap-4">
+                <span className="text-muted-foreground">Perimeter</span>
+                <span className="font-medium">
+                  {perimeterMeters ? `${perimeterMeters} meters` : "—"}
+                </span>
+              </div>
+              <div className="flex justify-between gap-4">
+                <span className="text-muted-foreground">Slope</span>
+                <span className="font-medium">2.5%</span>
+              </div>
+              {!isValidPolygon && boundaryPoints.length >= 3 && (
+                <div className="text-orange-500 text-xs mt-1">
+                  ⚠️ Points may be collinear — area too small
+                </div>
+              )}
+              {areaAcres > 1000 && (
+                <div className="text-orange-500 text-xs mt-1">
+                  ⚠️ Very large boundary — verify coordinates
+                </div>
+              )}
             </div>
-            <div className="flex justify-between gap-4">
-              <span className="text-muted-foreground">Area</span>
-              <span className="font-medium">
-                {computeArea(boundaryPoints) ? `${computeArea(boundaryPoints)} acres` : "—"}
-              </span>
-            </div>
-            <div className="flex justify-between gap-4">
-              <span className="text-muted-foreground">Perimeter</span>
-              <span className="font-medium">
-                {computePerimeter(boundaryPoints)
-                  ? `${computePerimeter(boundaryPoints)} meters`
-                  : "—"}
-              </span>
-            </div>
-            <div className="flex justify-between gap-4">
-              <span className="text-muted-foreground">Slope</span>
-              <span className="font-medium">2.5%</span>
-            </div>
-          </div>
-        ) : (
+          )
+        })() : (
           <div className="pointer-events-auto space-y-2">
             <div className="rounded-xl bg-white/90 px-3 py-2 text-xs shadow-sm space-y-1">
               <div className="flex justify-between gap-4">

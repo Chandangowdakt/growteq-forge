@@ -1,4 +1,5 @@
 import { Response } from "express"
+import mongoose from "mongoose"
 import { SiteEvaluation } from "../models/SiteEvaluation"
 import { Site } from "../models/Site"
 import { Proposal } from "../models/Proposal"
@@ -74,6 +75,26 @@ export const createSiteEvaluation = asyncHandler(async (req: AuthenticatedReques
       Number.isFinite(calculatedInvestment) && { calculatedInvestment }),
     ...(typeof infrastructureType === "string" &&
       infrastructureType && { infrastructureRecommendation: infrastructureType }),
+  })
+
+  // Safely convert siteId to ObjectId and update status
+  let siteObjectId: mongoose.Types.ObjectId
+  try {
+    siteObjectId = new mongoose.Types.ObjectId(siteId as string)
+  } catch (e) {
+    console.error("Invalid siteId format:", siteId)
+    return res.status(400).json({ success: false, error: "Invalid siteId" })
+  }
+
+  const updatedSite = await Site.findByIdAndUpdate(
+    siteObjectId,
+    { $set: { status: "submitted" } },
+    { new: true, runValidators: false }
+  )
+  console.log("Site update result:", {
+    siteId: siteObjectId.toString(),
+    found: !!updatedSite,
+    newStatus: (updatedSite as any)?.status,
   })
   const site = await Site.findById(siteId).lean()
   const area = (site?.area as number) ?? 0

@@ -26,6 +26,12 @@ api.interceptors.request.use((config) => {
 api.interceptors.response.use(
   (res) => res,
   (err: AxiosError<{ error?: string }>) => {
+    if (!err.response) {
+      // Network error - backend unreachable
+      console.error("Network error - backend unreachable")
+      // Don't redirect, let components handle it
+      return Promise.reject(new Error("Network error. Please check your connection."))
+    }
     if (err.response?.status === 401 && typeof window !== "undefined") {
       localStorage.removeItem("forge_token")
       localStorage.removeItem("forge_user")
