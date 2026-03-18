@@ -22,7 +22,7 @@ interface BoundaryPoint {
   id: string
 }
 
-interface LeafletMapProps {
+export interface LeafletMapProps {
   boundary: BoundaryPoint[]
   onBoundaryChange: (points: BoundaryPoint[], areaAcres: number) => void
   isFullscreen: boolean

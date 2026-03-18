@@ -9,6 +9,7 @@ import { Badge } from "@/components/ui/badge"
 import dynamic from "next/dynamic"
 import { toast } from "@/hooks/use-toast"
 import { getUserRole, hasPermission } from "@/lib/permissions"
+import type { LeafletMapProps } from "@/app/dashboard/farms/LeafletMap"
 
 type BoundaryPoint = { lat: number; lng: number; id: string }
 
@@ -26,18 +27,8 @@ interface SiteResponse {
   notes?: string
 }
 
-interface LeafletMapProps {
-  boundary: BoundaryPoint[]
-  onBoundaryChange: (points: BoundaryPoint[], area: number) => void
-  isFullscreen: boolean
-  onExitFullscreen: () => void
-  initialCenter?: { lat: number; lng: number } | null
-  initialBoundary?: BoundaryPoint[]
-}
-
 // Reuse farms map in read-only mode
-// @ts-ignore dynamic import typed via LeafletMapProps
-const LeafletMap = dynamic<LeafletMapProps>(() => import("../../../LeafletMap"), {
+const LeafletMap = dynamic<LeafletMapProps>(() => import("@/app/dashboard/farms/LeafletMap"), {
   ssr: false,
   loading: () => (
     <div className="h-64 bg-gray-100 animate-pulse flex items-center justify-center rounded-lg">
