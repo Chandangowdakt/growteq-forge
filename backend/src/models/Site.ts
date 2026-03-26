@@ -8,6 +8,8 @@ export interface ISite extends Document {
   slope?: number
   notes?: string
   farmId?: mongoose.Types.ObjectId
+  /** User who created the site (optional for legacy documents). */
+  createdBy?: mongoose.Types.ObjectId
   status?: "draft" | "submitted" | "approved" | "rejected"
   createdAt: Date
   updatedAt: Date
@@ -22,6 +24,7 @@ const siteSchema = new Schema<ISite>(
     slope: { type: Number, min: 0 },
     notes: { type: String, trim: true },
     farmId: { type: Schema.Types.ObjectId, ref: "Farm" },
+    createdBy: { type: Schema.Types.ObjectId, ref: "User", required: false },
     status: {
       type: String,
       enum: ["draft", "submitted", "approved", "rejected"],

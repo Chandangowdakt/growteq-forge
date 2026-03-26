@@ -7,6 +7,8 @@ import { SiteEvaluation } from "../models/SiteEvaluation"
 import { ApiError } from "../utils/ApiError"
 import { asyncHandler } from "../utils/asyncHandler"
 import { AuthenticatedRequest } from "../middleware/auth"
+import { needsOwnUserScope } from "../utils/permissionUtils"
+import { logAudit } from "../utils/auditLogger"
 import { createProposalFromRecommendation } from "../services/recommendationService"
 
 async function fetchSiteMapSnapshotUrl(
@@ -50,7 +52,8 @@ async function fetchSiteMapSnapshotUrl(
 
 export const listProposals = asyncHandler(async (req: AuthenticatedRequest, res: Response) => {
   const userId = req.auth!.userId
-  const proposals = await Proposal.find({ userId }).populate("siteEvaluationId").sort({ createdAt: -1 })
+  const filter = needsOwnUserScope(req.user, "proposals") ? { userId } : {}
+  const proposals = await Proposal.find(filter).populate("siteEvaluationId").sort({ createdAt: -1 })
   res.json({ success: true, data: proposals })
 })
 
@@ -66,24 +69,46 @@ export const createProposal = asyncHandler(async (req: AuthenticatedRequest, res
     siteEvaluationId,
     content: content ?? {},
   })
+  logAudit({
+    userId: req.auth!.userId,
+    action: "CREATE",
+    module: "proposals",
+    entityId: proposal._id,
+    after: proposal.toObject ? proposal.toObject() : proposal,
+    req,
+  })
   res.status(201).json({ success: true, data: proposal })
 })
 
 export const getProposal = asyncHandler(async (req: AuthenticatedRequest, res: Response) => {
   const userId = req.auth!.userId
-  const proposal = await Proposal.findOne({ _id: req.params.id, userId }).populate("siteEvaluationId")
+  const filter: Record<string, unknown> = { _id: req.params.id }
+  if (needsOwnUserScope(req.user, "proposals")) filter.userId = userId
+  const proposal = await Proposal.findOne(filter).populate("siteEvaluationId")
   if (!proposal) throw new ApiError(404, "Proposal not found")
   res.json({ success: true, data: proposal })
 })
 
 export const updateProposal = asyncHandler(async (req: AuthenticatedRequest, res: Response) => {
-  const userId = req.auth!.userId
+  const body = req.body as Record<string, unknown>
+  const previous = await Proposal.findById(req.params.id).lean()
   const proposal = await Proposal.findOneAndUpdate(
-    { _id: req.params.id, userId },
-    { $set: req.body },
+    { _id: req.params.id },
+    { $set: body },
     { new: true, runValidators: true }
   )
   if (!proposal) throw new ApiError(404, "Proposal not found")
+  if (body && typeof body === "object" && Object.keys(body).length > 0) {
+    logAudit({
+      userId: req.auth!.userId,
+      action: "UPDATE",
+      module: "proposals",
+      entityId: proposal._id,
+      before: previous ?? undefined,
+      after: proposal.toObject ? proposal.toObject() : proposal,
+      req,
+    })
+  }
   res.json({ success: true, data: proposal })
 })
 
@@ -175,10 +200,9 @@ export const getProposalsForSite = asyncHandler(
       throw new ApiError(400, "siteId is required")
     }
 
-    const proposals = await Proposal.find({
-      userId,
-      siteEvaluationId: siteId,
-    }).sort({ createdAt: -1 })
+    const q: Record<string, unknown> = { siteEvaluationId: siteId }
+    if (needsOwnUserScope(req.user, "proposals")) q.userId = userId
+    const proposals = await Proposal.find(q).sort({ createdAt: -1 })
 
     const data = proposals.map((p) => {
       const content = (p.content ?? {}) as {
@@ -213,10 +237,9 @@ export const getProposalsForFarm = asyncHandler(
       throw new ApiError(400, "farmId is required")
     }
 
-    const sites = await SiteEvaluation.find({
-      userId,
-      farmId,
-    }).select("_id")
+    const siteFilter: Record<string, unknown> = { farmId }
+    if (needsOwnUserScope(req.user, "evaluations")) siteFilter.userId = userId
+    const sites = await SiteEvaluation.find(siteFilter).select("_id")
 
     if (!sites.length) {
       return res.json({ success: true, data: [] })
@@ -224,10 +247,9 @@ export const getProposalsForFarm = asyncHandler(
 
     const siteIds = sites.map((s) => s._id)
 
-    const proposals = await Proposal.find({
-      userId,
-      siteEvaluationId: { $in: siteIds },
-    }).sort({ createdAt: -1 })
+    const propFilter: Record<string, unknown> = { siteEvaluationId: { $in: siteIds } }
+    if (needsOwnUserScope(req.user, "proposals")) propFilter.userId = userId
+    const proposals = await Proposal.find(propFilter).sort({ createdAt: -1 })
 
     const data = proposals.map((p) => {
       const content = (p.content ?? {}) as {
@@ -255,10 +277,9 @@ export const getProposalsForFarm = asyncHandler(
 
 export const getProposalPdf = asyncHandler(async (req: AuthenticatedRequest, res: Response) => {
   const userId = req.auth!.userId
-  const evaluation = await SiteEvaluation.findOne({
-    _id: req.params.id,
-    userId,
-  }).populate("farmId")
+  const evalFilter: Record<string, unknown> = { _id: req.params.id }
+  if (needsOwnUserScope(req.user, "evaluations")) evalFilter.userId = userId
+  const evaluation = await SiteEvaluation.findOne(evalFilter).populate("farmId")
 
   if (!evaluation) {
     throw new ApiError(404, "Site evaluation not found")

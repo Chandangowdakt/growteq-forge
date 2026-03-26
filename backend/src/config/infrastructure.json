@@ -1,5 +1,17 @@
 {
-  "polyhouse": { "minCostPerAcre": 2500000, "maxCostPerAcre": 3500000, "roiMonths": 18 },
-  "shade_net": { "minCostPerAcre": 200000, "maxCostPerAcre": 500000, "roiMonths": 6 },
-  "open_field": { "minCostPerAcre": 50000, "maxCostPerAcre": 200000, "roiMonths": 3 }
+  "polyhouse": {
+    "minCostPerAcre": 2000000,
+    "maxCostPerAcre": 3000000,
+    "roiMonths": 16
+  },
+  "shade_net": {
+    "minCostPerAcre": 200000,
+    "maxCostPerAcre": 500000,
+    "roiMonths": 6
+  },
+  "open_field": {
+    "minCostPerAcre": 50000,
+    "maxCostPerAcre": 200000,
+    "roiMonths": 3
+  }
 }

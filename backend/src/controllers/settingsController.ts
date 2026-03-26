@@ -1,49 +1,95 @@
-import fs from "fs"
-import path from "path"
 import { Response } from "express"
 import { User } from "../models/User"
+import { Infrastructure, type InfrastructureKind } from "../models/Infrastructure"
 import { ApiError } from "../utils/ApiError"
 import { asyncHandler } from "../utils/asyncHandler"
 import { AuthenticatedRequest } from "../middleware/auth"
+import {
+  getInfrastructureMap,
+  bumpInfrastructureConfigVersion,
+  type InfraCosts,
+} from "../services/infrastructureConfigService"
+import { normalizeRole } from "../middleware/roleMiddleware"
+import {
+  getDefaultPermissions,
+  getEffectivePermissions,
+  permissionsToJSON,
+  sanitizePermissionsPatch,
+} from "../utils/permissionUtils"
+import { logAudit } from "../utils/auditLogger"
 
-const INFRASTRUCTURE_JSON = path.join(__dirname, "..", "config", "infrastructure.json")
+const INFRA_KINDS: InfrastructureKind[] = ["polyhouse", "shade_net", "open_field"]
 
-const DEFAULT_INFRASTRUCTURE = {
-  polyhouse: { minCostPerAcre: 2500000, maxCostPerAcre: 3500000, roiMonths: 18 },
-  shade_net: { minCostPerAcre: 200000, maxCostPerAcre: 500000, roiMonths: 6 },
-  open_field: { minCostPerAcre: 50000, maxCostPerAcre: 200000, roiMonths: 3 },
+function parseInfraRow(
+  row: { minCost?: number; maxCost?: number; roiMonths?: number; minCostPerAcre?: number; maxCostPerAcre?: number } | undefined
+): InfraCosts | null {
+  if (!row) return null
+  const min = row.minCost ?? row.minCostPerAcre
+  const max = row.maxCost ?? row.maxCostPerAcre
+  const roi = row.roiMonths
+  if (min == null || max == null || roi == null) return null
+  return { minCost: Number(min), maxCost: Number(max), roiMonths: Number(roi) }
 }
 
 export const listTeam = asyncHandler(async (req: AuthenticatedRequest, res: Response) => {
   const users = await User.find({})
-    .select("name email role isActive createdAt")
+    .select("name email role isActive createdAt permissions")
     .sort({ createdAt: -1 })
     .lean()
   const data = users.map((u) => ({
     _id: u._id,
     name: u.name,
     email: u.email,
-    role: u.role ?? "user",
+    role: u.role ?? "viewer",
     status: (u as { isActive?: boolean }).isActive !== false ? "active" : "inactive",
     createdAt: u.createdAt,
+    permissions: permissionsToJSON(
+      getEffectivePermissions({
+        role: u.role,
+        permissions: (u as { permissions?: unknown }).permissions,
+      })
+    ),
   }))
   res.json({ success: true, data })
 })
+
+function normalizeIncomingRole(role: string | undefined): "admin" | "editor" | "viewer" {
+  const r = (role ?? "").toString().trim().toLowerCase()
+  // UI labels
+  if (r === "sales director") return "admin"
+  if (r === "field evaluator") return "editor"
+  if (r === "sales associate") return "viewer"
+  // Legacy API roles
+  if (r === "field_evaluator") return "editor"
+  if (r === "sales_associate") return "viewer"
+  if (r === "user") return "viewer"
+  // Canonical roles
+  if (r === "admin") return "admin"
+  if (r === "editor") return "editor"
+  if (r === "viewer") return "viewer"
+  // Default safe role
+  return "viewer"
+}
 
 export const addTeamMember = asyncHandler(async (req: AuthenticatedRequest, res: Response) => {
   const { name, email, role } = req.body as { name?: string; email?: string; role?: string }
   if (!name?.trim() || !email?.trim()) {
     throw new ApiError(400, "name and email are required")
   }
-  const existing = await User.findOne({ email: email.trim().toLowerCase() })
+  const normalizedEmail = email.trim().toLowerCase()
+  const existing = await User.findOne({ email: normalizedEmail })
   if (existing) {
     throw new ApiError(400, "User with this email already exists")
   }
+
+  const newRole = normalizeIncomingRole(role)
   const user = await User.create({
     name: name.trim(),
-    email: email.trim().toLowerCase(),
-    password: "changeme123",
-    role: role === "admin" ? "admin" : "user",
+    email: normalizedEmail,
+    // Will be hashed by User pre-save hook
+    password: "welcome123",
+    role: newRole,
+    permissions: getDefaultPermissions(newRole),
     isActive: true,
   })
   res.status(201).json({
@@ -54,23 +100,69 @@ export const addTeamMember = asyncHandler(async (req: AuthenticatedRequest, res:
       email: user.email,
       role: user.role,
       status: "active",
+      permissions: permissionsToJSON(getEffectivePermissions(user)),
     },
   })
 })
 
 export const updateTeamMember = asyncHandler(async (req: AuthenticatedRequest, res: Response) => {
   const userId = req.params.userId
-  const { role, status } = req.body as { role?: string; status?: string }
+  const existing = await User.findById(userId)
+  if (!existing) throw new ApiError(404, "User not found")
+
+  const { role, status, permissions: bodyPermissions } = req.body as {
+    role?: string
+    status?: string
+    permissions?: unknown
+  }
   const update: Record<string, unknown> = {}
-  if (role === "admin" || role === "user") update.role = role
+
+  if (role !== undefined) {
+    const newRole = normalizeIncomingRole(role)
+    const prevRole = normalizeRole(existing.role)
+    update.role = newRole
+    if (newRole !== prevRole && bodyPermissions === undefined) {
+      update.permissions = getDefaultPermissions(newRole)
+    }
+  }
   if (status === "active" || status === "inactive") update.isActive = status === "active"
+
+  if (bodyPermissions !== undefined) {
+    const patch = sanitizePermissionsPatch(bodyPermissions)
+    if (patch) {
+      const cur = (existing.toObject() as { permissions?: Record<string, { read?: boolean; write?: boolean }> })
+        .permissions
+      update.permissions = { ...(cur ?? {}), ...patch }
+    }
+  }
 
   const user = await User.findByIdAndUpdate(
     userId,
     { $set: update },
     { new: true, runValidators: true }
-  ).select("name email role isActive")
+  ).select("name email role isActive permissions")
   if (!user) throw new ApiError(404, "User not found")
+
+  if (Object.keys(update).length > 0) {
+    logAudit({
+      userId: req.auth!.userId,
+      action: "PERMISSION_CHANGE",
+      module: "settings",
+      entityId: user._id,
+      before: {
+        role: existing.role,
+        status: existing.isActive !== false ? "active" : "inactive",
+        permissions: permissionsToJSON(getEffectivePermissions(existing)),
+      },
+      after: {
+        role: user.role,
+        status: (user as { isActive?: boolean }).isActive !== false ? "active" : "inactive",
+        permissions: permissionsToJSON(getEffectivePermissions(user)),
+      },
+      req,
+    })
+  }
+
   res.json({
     success: true,
     data: {
@@ -79,6 +171,7 @@ export const updateTeamMember = asyncHandler(async (req: AuthenticatedRequest, r
       email: user.email,
       role: user.role,
       status: (user as { isActive?: boolean }).isActive !== false ? "active" : "inactive",
+      permissions: permissionsToJSON(getEffectivePermissions(user)),
     },
   })
 })
@@ -95,30 +188,32 @@ export const removeTeamMember = asyncHandler(async (req: AuthenticatedRequest, r
 })
 
 export const getInfrastructure = asyncHandler(async (_req: AuthenticatedRequest, res: Response) => {
-  let data = DEFAULT_INFRASTRUCTURE
-  if (fs.existsSync(INFRASTRUCTURE_JSON)) {
-    try {
-      const raw = fs.readFileSync(INFRASTRUCTURE_JSON, "utf8")
-      data = { ...DEFAULT_INFRASTRUCTURE, ...JSON.parse(raw) }
-    } catch {
-      // use defaults on parse error
-    }
-  }
+  const data = await getInfrastructureMap()
   res.json({ success: true, data })
 })
 
 export const saveInfrastructure = asyncHandler(async (req: AuthenticatedRequest, res: Response) => {
-  const body = req.body as Record<string, { minCostPerAcre?: number; maxCostPerAcre?: number; roiMonths?: number }>
-  const dir = path.dirname(INFRASTRUCTURE_JSON)
-  if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true })
-  const current = fs.existsSync(INFRASTRUCTURE_JSON)
-    ? JSON.parse(fs.readFileSync(INFRASTRUCTURE_JSON, "utf8"))
-    : DEFAULT_INFRASTRUCTURE
-  const data = {
-    polyhouse: { ...current.polyhouse, ...body.polyhouse },
-    shade_net: { ...current.shade_net, ...body.shade_net },
-    open_field: { ...current.open_field, ...body.open_field },
+  const body = req.body as Record<
+    string,
+    { minCost?: number; maxCost?: number; roiMonths?: number; minCostPerAcre?: number; maxCostPerAcre?: number }
+  >
+  let didPersist = false
+  for (const kind of INFRA_KINDS) {
+    const parsed = parseInfraRow(body[kind])
+    if (!parsed) continue
+    didPersist = true
+    await Infrastructure.findOneAndUpdate(
+      { type: kind },
+      {
+        type: kind,
+        minCost: parsed.minCost,
+        maxCost: parsed.maxCost,
+        roiMonths: parsed.roiMonths,
+      },
+      { upsert: true, new: true, runValidators: true }
+    )
   }
-  fs.writeFileSync(INFRASTRUCTURE_JSON, JSON.stringify(data, null, 2), "utf8")
+  if (didPersist) await bumpInfrastructureConfigVersion()
+  const data = await getInfrastructureMap()
   res.json({ success: true, data })
 })

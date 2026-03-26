@@ -8,7 +8,8 @@ import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import dynamic from "next/dynamic"
 import { toast } from "@/hooks/use-toast"
-import { getUserRole, hasPermission } from "@/lib/permissions"
+import { hasPermission } from "@/lib/permissions"
+import { useAuth } from "@/app/context/auth-context"
 import type { LeafletMapProps } from "@/app/dashboard/farms/LeafletMap"
 
 type BoundaryPoint = { lat: number; lng: number; id: string }
@@ -38,6 +39,7 @@ const LeafletMap = dynamic<LeafletMapProps>(() => import("@/app/dashboard/farms/
 })
 
 export default function SiteDetailPage() {
+  const { user } = useAuth()
   const params = useParams()
   const searchParams = useSearchParams()
   const router = useRouter()
@@ -52,12 +54,6 @@ export default function SiteDetailPage() {
   const [editName, setEditName] = useState("")
   const [editNotes, setEditNotes] = useState("")
   const [boundary, setBoundary] = useState<BoundaryPoint[]>([])
-  const [role, setRole] = useState("sales_associate")
-
-  useEffect(() => {
-    setRole(getUserRole())
-  }, [])
-
   const statusBadgeVariant = useMemo(() => {
     const status = site?.status ?? "draft"
     switch (status) {
@@ -263,7 +259,7 @@ export default function SiteDetailPage() {
             </div>
             <div className="flex items-center gap-3">
               <Badge className={statusBadgeVariant}>{site.status ?? "draft"}</Badge>
-              {hasPermission(role, "canCreateSite") && (
+              {hasPermission(user, "canCreateSite") && (
                 <Button variant="outline" size="sm" onClick={handleStartEvaluation}>
                   Start Evaluation
                 </Button>
@@ -276,7 +272,7 @@ export default function SiteDetailPage() {
               >
                 {saving ? "Saving..." : "Save Changes"}
               </Button>
-              {hasPermission(role, "canDeleteSite") && (
+              {hasPermission(user, "canDeleteSite") && (
                 <Button
                   variant="outline"
                   size="sm"

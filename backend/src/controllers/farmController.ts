@@ -4,12 +4,18 @@ import { Site } from "../models/Site"
 import { ApiError } from "../utils/ApiError"
 import { asyncHandler } from "../utils/asyncHandler"
 import { AuthenticatedRequest } from "../middleware/auth"
+import { needsOwnUserScope } from "../utils/permissionUtils"
+import { logAudit } from "../utils/auditLogger"
 
 const notDeleted = { deletedAt: { $exists: false } }
 
 export const listFarms = asyncHandler(async (req: AuthenticatedRequest, res: Response) => {
   const userId = req.auth!.userId
-  const farms = await Farm.find({ userId, ...notDeleted }).sort({ createdAt: -1 }).lean()
+  const query: Record<string, unknown> = { ...notDeleted }
+  if (needsOwnUserScope(req.user, "farms")) {
+    query.userId = userId
+  }
+  const farms = await Farm.find(query).sort({ createdAt: -1 }).lean()
   const farmIds = farms.map((f) => f._id)
   const counts = await Site.aggregate([
     { $match: { farmId: { $in: farmIds } } },
@@ -39,13 +45,23 @@ export const createFarm = asyncHandler(async (req: AuthenticatedRequest, res: Re
     district: district?.trim?.() ?? undefined,
     description: description?.trim?.() ?? undefined,
   })
+  logAudit({
+    userId: req.auth!.userId,
+    action: "CREATE",
+    module: "farms",
+    entityId: farm._id,
+    after: farm.toObject ? farm.toObject() : farm,
+    req,
+  })
   res.status(201).json({ success: true, data: farm })
 })
 
 export const getFarm = asyncHandler(async (req: AuthenticatedRequest, res: Response) => {
   const userId = req.auth!.userId
   const farmId = req.params.farmId ?? req.params.id
-  const farm = await Farm.findOne({ _id: farmId, userId, ...notDeleted })
+  const farm = needsOwnUserScope(req.user, "farms")
+    ? await Farm.findOne({ _id: farmId, userId, ...notDeleted })
+    : await Farm.findOne({ _id: farmId, ...notDeleted })
   if (!farm) throw new ApiError(404, "Farm not found")
   const siteCount = await Site.countDocuments({ farmId: farm._id })
   const data = farm.toObject ? farm.toObject() : farm
@@ -53,38 +69,60 @@ export const getFarm = asyncHandler(async (req: AuthenticatedRequest, res: Respo
 })
 
 export const updateFarm = asyncHandler(async (req: AuthenticatedRequest, res: Response) => {
-  const userId = req.auth!.userId
   const farmId = req.params.farmId ?? req.params.id
   const allowed = ["name", "location", "totalArea", "country", "state", "district", "description"]
   const update: Record<string, unknown> = {}
   for (const key of allowed) {
     if (req.body[key] !== undefined) update[key] = req.body[key]
   }
+  const previous = await Farm.findOne({ _id: farmId, ...notDeleted }).lean()
   const farm = await Farm.findOneAndUpdate(
-    { _id: farmId, userId, ...notDeleted },
+    { _id: farmId, ...notDeleted },
     { $set: update },
     { new: true, runValidators: true }
   )
   if (!farm) throw new ApiError(404, "Farm not found")
+  if (Object.keys(update).length > 0) {
+    logAudit({
+      userId: req.auth!.userId,
+      action: "UPDATE",
+      module: "farms",
+      entityId: farm._id,
+      before: previous ?? undefined,
+      after: farm.toObject ? farm.toObject() : farm,
+      req,
+    })
+  }
   res.json({ success: true, data: farm })
 })
 
 export const deleteFarm = asyncHandler(async (req: AuthenticatedRequest, res: Response) => {
-  const userId = req.auth!.userId
   const farmId = req.params.farmId ?? req.params.id
+  const previous = await Farm.findOne({ _id: farmId, ...notDeleted }).lean()
   const farm = await Farm.findOneAndUpdate(
-    { _id: farmId, userId, ...notDeleted },
+    { _id: farmId, ...notDeleted },
     { $set: { deletedAt: new Date() } },
     { new: true }
   )
   if (!farm) throw new ApiError(404, "Farm not found")
+  logAudit({
+    userId: req.auth!.userId,
+    action: "DELETE",
+    module: "farms",
+    entityId: farm._id,
+    before: previous ?? undefined,
+    after: { deletedAt: (farm as { deletedAt?: Date }).deletedAt },
+    req,
+  })
   res.json({ success: true, message: "Farm deleted" })
 })
 
 export const getFarmSites = asyncHandler(async (req: AuthenticatedRequest, res: Response) => {
   const userId = req.auth!.userId
   const farmId = req.params.farmId ?? req.params.id
-  const farm = await Farm.findOne({ _id: farmId, userId, ...notDeleted })
+  const farm = needsOwnUserScope(req.user, "farms")
+    ? await Farm.findOne({ _id: farmId, userId, ...notDeleted })
+    : await Farm.findOne({ _id: farmId, ...notDeleted })
   if (!farm) throw new ApiError(404, "Farm not found")
   const sites = await Site.find({ farmId: farm._id }).sort({ createdAt: -1 })
   res.json({ success: true, data: sites })

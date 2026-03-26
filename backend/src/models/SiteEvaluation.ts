@@ -3,10 +3,22 @@ import mongoose, { Document, Schema } from "mongoose"
 export type SunExposure = "full" | "partial" | "shade"
 export type SiteEvaluationStatus = "draft" | "submitted" | "approved" | "rejected"
 
+export type InfrastructureSnapshotKind = "polyhouse" | "shade_net" | "open_field"
+
+/** Frozen infra pricing/ROI at evaluation creation (optional for legacy documents). */
+export interface IInfrastructureSnapshot {
+  type: InfrastructureSnapshotKind
+  minCost: number
+  maxCost: number
+  roiMonths: number
+  configVersion?: number
+}
+
 export interface ISiteEvaluation extends Document {
   siteId: mongoose.Types.ObjectId
   farmId: mongoose.Types.ObjectId
-  userId: mongoose.Types.ObjectId
+  /** Creator (optional for legacy documents). */
+  userId?: mongoose.Types.ObjectId
   soilType: string
   waterAvailability: string
   slopePercentage: number
@@ -23,6 +35,7 @@ export interface ISiteEvaluation extends Document {
   numberOfUnits?: number
   cropType?: string
   calculatedInvestment?: number
+  infrastructureSnapshot?: IInfrastructureSnapshot
   createdAt: Date
   updatedAt: Date
 }
@@ -31,7 +44,7 @@ const siteEvaluationSchema = new Schema<ISiteEvaluation>(
   {
     siteId: { type: Schema.Types.ObjectId, ref: "Site", required: true },
     farmId: { type: Schema.Types.ObjectId, ref: "Farm", required: true },
-    userId: { type: Schema.Types.ObjectId, ref: "User", required: true },
+    userId: { type: Schema.Types.ObjectId, ref: "User", required: false },
     soilType: { type: String, required: true, trim: true },
     waterAvailability: { type: String, required: true, trim: true },
     slopePercentage: { type: Number, required: true, min: 0 },
@@ -47,6 +60,20 @@ const siteEvaluationSchema = new Schema<ISiteEvaluation>(
     numberOfUnits: { type: Number, default: 1 },
     cropType: { type: String, trim: true },
     calculatedInvestment: { type: Number },
+    infrastructureSnapshot: new Schema(
+      {
+        type: {
+          type: String,
+          enum: ["polyhouse", "shade_net", "open_field"],
+          required: true,
+        },
+        minCost: { type: Number, required: true, min: 0 },
+        maxCost: { type: Number, required: true, min: 0 },
+        roiMonths: { type: Number, required: true, min: 0 },
+        configVersion: { type: Number, min: 1, required: false },
+      },
+      { _id: false }
+    ),
   },
   { timestamps: true }
 )

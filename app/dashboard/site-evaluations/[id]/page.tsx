@@ -15,20 +15,47 @@ import {
   SelectValue,
 } from "@/components/ui/select"
 import { Label } from "@/components/ui/label"
-import { api, siteEvaluationsApi, type SiteEvaluation } from "@/lib/api"
+import { api, siteEvaluationsApi, settingsApi, type SiteEvaluation, type InfrastructureConfig } from "@/lib/api"
 import { ArrowLeft, AlertCircle, FileDown } from "lucide-react"
-
-const COST_PER_ACRE: Record<string, number> = {
-  Polyhouse: 800000,
-  "Shade Net": 400000,
-  "Open Field": 150000,
-}
 
 const RECOMMENDATION_OPTIONS = ["Polyhouse", "Shade Net", "Open Field"] as const
 
-function computeCost(area: number, recommendation: string | undefined): number | undefined {
-  if (!recommendation || !(recommendation in COST_PER_ACRE)) return undefined
-  return Math.round(area * COST_PER_ACRE[recommendation])
+function infraKeyFromReco(s: string | undefined): keyof InfrastructureConfig | null {
+  if (!s) return null
+  const t = s.toLowerCase().replace(/\s+/g, "_")
+  if (t === "polyhouse") return "polyhouse"
+  if (t === "shade_net" || t === "shadenet") return "shade_net"
+  if (t === "open_field" || t === "openfield") return "open_field"
+  return null
+}
+
+function computeCostFromInfra(
+  area: number,
+  recommendation: string | undefined,
+  infra: InfrastructureConfig | null
+): number | undefined {
+  const k = infraKeyFromReco(recommendation)
+  if (!k || !infra) return undefined
+  const row = infra[k]
+  return Math.round((area * (row.minCost + row.maxCost)) / 2)
+}
+
+function computeCostFromSnapshot(
+  area: number,
+  units: number,
+  snap: { minCost: number; maxCost: number }
+): number {
+  const u = Math.max(1, units)
+  return Math.round((area * (snap.minCost + snap.maxCost) * u) / 2)
+}
+
+/** Map API/DB values (e.g. polyhouse) to Select option labels. */
+function toRecommendationSelectLabel(s: string | undefined): string {
+  const k = infraKeyFromReco(s)
+  if (k === "polyhouse") return "Polyhouse"
+  if (k === "shade_net") return "Shade Net"
+  if (k === "open_field") return "Open Field"
+  return s ?? ""
 }
 
 export default function SiteEvaluationDetailPage() {
@@ -56,6 +83,30 @@ export default function SiteEvaluationDetailPage() {
     annualProfit: number
     roiMonths: number
   } | null>(null)
+  const [infraConfig, setInfraConfig] = useState<InfrastructureConfig | null>(null)
+  const [infraLoading, setInfraLoading] = useState(false)
+
+  useEffect(() => {
+    if (!evaluation) return
+    if (evaluation.infrastructureSnapshot) {
+      setInfraConfig(null)
+      setInfraLoading(false)
+      return
+    }
+    let cancelled = false
+    setInfraLoading(true)
+    settingsApi
+      .getInfrastructure()
+      .then((res) => {
+        if (!cancelled && res?.data) setInfraConfig(res.data)
+      })
+      .finally(() => {
+        if (!cancelled) setInfraLoading(false)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [evaluation])
 
   const load = useCallback(async () => {
     if (!id) return
@@ -77,15 +128,27 @@ export default function SiteEvaluationDetailPage() {
               : ""
         )
         setInfrastructureRecommendation(
-          (e as { infrastructureRecommendation?: string }).infrastructureRecommendation ??
-          proposal?.infrastructureType ??
-          ""
+          toRecommendationSelectLabel(
+            (e as { infrastructureRecommendation?: string }).infrastructureRecommendation ??
+              proposal?.infrastructureType ??
+              ""
+          )
         )
-        setCostEstimate(
-          (e as { costEstimate?: number }).costEstimate ??
-          proposal?.investmentValue ??
-          (area ? computeCost(area, (e as { infrastructureRecommendation?: string }).infrastructureRecommendation ?? proposal?.infrastructureType) : undefined)
-        )
+        const snap = e.infrastructureSnapshot
+        const units = typeof e.numberOfUnits === "number" && e.numberOfUnits >= 1 ? e.numberOfUnits : 1
+        if (
+          snap &&
+          typeof snap.minCost === "number" &&
+          typeof snap.maxCost === "number" &&
+          Number.isFinite(snap.minCost) &&
+          Number.isFinite(snap.maxCost)
+        ) {
+          setCostEstimate(computeCostFromSnapshot(area, units, snap))
+        } else {
+          setCostEstimate(
+            (e as { costEstimate?: number }).costEstimate ?? proposal?.investmentValue ?? undefined
+          )
+        }
       }
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to load evaluation")
@@ -99,12 +162,16 @@ export default function SiteEvaluationDetailPage() {
   }, [load])
 
   useEffect(() => {
-    if (evaluation == null) return
+    if (evaluation == null || evaluation.infrastructureSnapshot || !infraConfig) return
     const siteRef = typeof evaluation.siteId === "object" && evaluation.siteId && "area" in evaluation.siteId ? evaluation.siteId : null
     const area = (siteRef as { area?: number })?.area ?? (evaluation as { area?: number }).area ?? 0
-    const cost = computeCost(area, infrastructureRecommendation || undefined)
-    setCostEstimate(cost)
-  }, [evaluation, infrastructureRecommendation])
+    const reco =
+      infrastructureRecommendation ||
+      (evaluation as { infrastructureRecommendation?: string }).infrastructureRecommendation ||
+      undefined
+    const cost = computeCostFromInfra(area, reco, infraConfig)
+    if (cost != null) setCostEstimate(cost)
+  }, [evaluation, infrastructureRecommendation, infraConfig])
 
   useEffect(() => {
     if (!id) return
@@ -278,6 +345,22 @@ export default function SiteEvaluationDetailPage() {
     )
   }
 
+  const needsLiveInfra = evaluation != null && !evaluation.infrastructureSnapshot
+  if (needsLiveInfra && (infraLoading || !infraConfig)) {
+    return (
+      <div className="space-y-6">
+        <Link
+          href="/dashboard/farms"
+          className="inline-flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground"
+        >
+          <ArrowLeft className="h-4 w-4" />
+          Back to Farms
+        </Link>
+        <p className="text-muted-foreground">Loading infrastructure settings…</p>
+      </div>
+    )
+  }
+
   if (error || !evaluation) {
     return (
       <div className="space-y-6">
@@ -390,6 +473,20 @@ export default function SiteEvaluationDetailPage() {
                 ? `₹${costEstimate.toLocaleString()}`
                 : "—"}
             </p>
+            {evaluation.infrastructureSnapshot && (
+              <p className="text-xs text-muted-foreground">
+                From evaluation snapshot: ₹
+                {Math.round(
+                  (evaluation.infrastructureSnapshot.minCost +
+                    evaluation.infrastructureSnapshot.maxCost) /
+                    2
+                ).toLocaleString("en-IN")}{" "}
+                /acre (avg) • ROI: {evaluation.infrastructureSnapshot.roiMonths} months
+                {typeof evaluation.numberOfUnits === "number" && evaluation.numberOfUnits > 1
+                  ? ` • ${evaluation.numberOfUnits} units`
+                  : ""}
+              </p>
+            )}
             {recommendationLoading && (
               <p className="text-xs text-muted-foreground">Loading recommendation…</p>
             )}

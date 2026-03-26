@@ -33,6 +33,8 @@ import {
 import { siteEvaluationsApi, farmsApi, type Farm, type SiteEvaluation } from "@/lib/api"
 import { formatDistanceToNow } from "date-fns"
 import { toast } from "@/hooks/use-toast"
+import { hasPermission } from "@/lib/permissions"
+import { useAuth } from "@/app/context/auth-context"
 
 const baseURL =
   (typeof process !== "undefined" && process.env.NEXT_PUBLIC_API_URL) || "http://localhost:5000"
@@ -48,6 +50,7 @@ function statusBadge(status: string) {
 }
 
 export default function SiteEvaluationsPage() {
+  const { user } = useAuth()
   const [evaluations, setEvaluations] = useState<(SiteEvaluation & { siteId?: { name?: string; area?: number }; proposalId?: string | null })[]>([])
   const [farms, setFarms] = useState<Farm[]>([])
   const [sites, setSites] = useState<{ _id: string; name: string; area: number }[]>([])
@@ -66,7 +69,6 @@ export default function SiteEvaluationsPage() {
     sunExposure: "full" as "full" | "partial" | "shade",
     notes: "",
   })
-
   const fetchEvaluations = useCallback(async () => {
     setLoading(true)
     try {
@@ -204,9 +206,11 @@ export default function SiteEvaluationsPage() {
           <h1 className="text-3xl font-bold tracking-tight">Site Evaluations</h1>
           <p className="text-muted-foreground">Infrastructure suitability and proposals</p>
         </div>
-        <Button className="bg-[#387F43] hover:bg-[#2d6535]" onClick={() => setFormOpen(true)}>
-          New Evaluation
-        </Button>
+        {hasPermission(user, "canGenerateProposal") && (
+          <Button className="bg-[#387F43] hover:bg-[#2d6535]" onClick={() => setFormOpen(true)}>
+            New Evaluation
+          </Button>
+        )}
       </div>
 
       <Dialog open={formOpen} onOpenChange={setFormOpen}>

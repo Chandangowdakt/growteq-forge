@@ -1,5 +1,6 @@
 import { Router, type IRouter } from "express"
 import { authMiddleware } from "../middleware/auth"
+import { checkPermission } from "../middleware/permissionMiddleware"
 import {
   listReports,
   listReportTypes,
@@ -14,13 +15,13 @@ const router: IRouter = Router()
 
 router.use(authMiddleware)
 
-router.get("/", listReports)
-router.get("/list", listReportTypes)
-router.post("/generate", generateReport)
-router.get("/download/:fileName", downloadReport)
-router.delete("/:fileName", deleteReport)
-router.post("/farm/:farmId", generateFarmReport)
-router.post("/proposal/:proposalId", generateProposalReport)
+router.get("/", checkPermission("reports", "read"), listReports)
+router.get("/list", checkPermission("reports", "read"), listReportTypes)
+router.post("/generate", checkPermission("reports", "write"), generateReport)
+router.get("/download/:fileName", checkPermission("reports", "read"), downloadReport)
+router.delete("/:fileName", checkPermission("reports", "write"), deleteReport)
+router.post("/farm/:farmId", checkPermission("reports", "write"), generateFarmReport)
+router.post("/proposal/:proposalId", checkPermission("reports", "write"), generateProposalReport)
 
 export default router
 

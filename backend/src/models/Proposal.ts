@@ -4,7 +4,8 @@ export interface IProposal extends Document {
   title?: string
   siteId?: mongoose.Types.ObjectId
   siteEvaluationId?: mongoose.Types.ObjectId
-  userId: mongoose.Types.ObjectId
+  /** Owner (optional for legacy documents). */
+  userId?: mongoose.Types.ObjectId
   content: Record<string, unknown>
   status: "draft" | "sent" | "recommended" | "rejected"
   investmentValue?: number
@@ -19,7 +20,7 @@ const proposalSchema = new Schema<IProposal>(
     title: { type: String, trim: true },
     siteId: { type: Schema.Types.ObjectId, ref: "Site" },
     siteEvaluationId: { type: Schema.Types.ObjectId, ref: "SiteEvaluation" },
-    userId: { type: Schema.Types.ObjectId, ref: "User", required: true },
+    userId: { type: Schema.Types.ObjectId, ref: "User", required: false },
     content: { type: Schema.Types.Mixed, default: {} },
     status: { type: String, enum: ["draft", "sent", "recommended", "rejected"], default: "draft" },
     investmentValue: { type: Number, min: 0 },

@@ -1,43 +1,48 @@
-# Environment files
+# Dependencies
+node_modules
+
+# Environment (never commit secrets; examples are whitelisted below)
 .env
 .env.local
+.env.development.local
+.env.test.local
+.env.production.local
 backend/.env
-
-# Node
-node_modules
-backend/node_modules
+!.env.example
+!backend/.env.example
 
 # Next.js
 .next
+out
+build
 
-# Logs
+# Backend compiled output
+dist
+backend/dist
+
+# Logs & coverage
 *.log
+coverage
+.nyc_output
 
-# OS
-.DS_Store# See https://help.github.com/articles/ignoring-files/ for more about ignoring files.
+# OS & editors
+.DS_Store
+Thumbs.db
+.idea
+.vscode/*
+!.vscode/extensions.json
 
-# dependencies
-/node_modules
-
-# next.js
-/.next/
-/out/
-
-# production
-/build
-
-# debug
+# Debug
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
 .pnpm-debug.log*
 
-# env files
-.env*
-
-# vercel
+# Vercel
 .vercel
 
-# typescript
+# TypeScript
 *.tsbuildinfo
-next-env.d.ts
+
+# Generated runtime artifacts (reports, uploads)
+backend/public/reports/*.pdf

@@ -8,18 +8,19 @@ import {
   getFarmSites,
 } from "../controllers/farmController"
 import { authMiddleware } from "../middleware/auth"
-import { requireRole } from "../middleware/roleMiddleware"
+import { authorizeRoles } from "../middleware/roleMiddleware"
+import { checkPermission } from "../middleware/permissionMiddleware"
 
 const router: IRouter = Router()
 
 router.use(authMiddleware)
 
-router.get("/", listFarms)
-router.post("/", requireRole("admin", "field_evaluator"), createFarm)
-router.get("/:farmId/sites", getFarmSites)
-router.get("/:farmId", getFarm)
-router.put("/:farmId", updateFarm)
-router.patch("/:farmId", updateFarm)
-router.delete("/:farmId", requireRole("admin"), deleteFarm)
+router.get("/", checkPermission("farms", "read"), listFarms)
+router.post("/", checkPermission("farms", "write"), createFarm)
+router.get("/:farmId/sites", checkPermission("farms", "read"), getFarmSites)
+router.get("/:farmId", checkPermission("farms", "read"), getFarm)
+router.put("/:farmId", checkPermission("farms", "write"), updateFarm)
+router.patch("/:farmId", checkPermission("farms", "write"), updateFarm)
+router.delete("/:farmId", authorizeRoles("admin"), deleteFarm)
 
 export default router

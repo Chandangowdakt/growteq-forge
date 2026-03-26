@@ -15,7 +15,8 @@ import {
 } from '@/components/ui/select'
 import { MapPin } from 'lucide-react'
 import { farmsApi, reportsApi, type Farm } from '@/lib/api'
-import { getUserRole, hasPermission } from '@/lib/permissions'
+import { hasPermission } from '@/lib/permissions'
+import { useAuth } from '@/app/context/auth-context'
 import { formatINR } from '@/lib/utils'
 import { formatDistanceToNow } from 'date-fns'
 import { toast } from '@/hooks/use-toast'
@@ -42,6 +43,7 @@ const LeafletMap = dynamic<LeafletMapProps>(() => import('./LeafletMap'), {
 })
 
 export default function FarmsPage() {
+  const { user } = useAuth()
   const [farmSites, setFarmSites] = useState<
     { _id: string; name: string; area: number; perimeter?: number; status?: string; createdAt?: string }[]
   >([])
@@ -64,11 +66,6 @@ export default function FarmsPage() {
   } | null>(null)
   const [lastRecommendationSiteId, setLastRecommendationSiteId] = useState<string | null>(null)
   const [generatingReport, setGeneratingReport] = useState(false)
-  const [role, setRole] = useState('sales_associate')
-
-  useEffect(() => {
-    setRole(getUserRole())
-  }, [])
 
   const fetchFarms = useCallback(async () => {
     setFarmsLoading(true)
@@ -341,7 +338,7 @@ export default function FarmsPage() {
         </div>
 
         <div className="flex flex-wrap items-center gap-2">
-          {hasPermission(role, 'canCreateFarm') && (
+          {hasPermission(user, 'canCreateFarm') && (
             <Button
               className="bg-[#387F43] hover:bg-[#2d6535]"
               onClick={() => setCreateFarmOpen(true)}
@@ -387,7 +384,7 @@ export default function FarmsPage() {
                     >
                       <Link href={`/dashboard/farms/${farm._id}/sites`}>View Sites</Link>
                     </Button>
-                    {hasPermission(role, 'canDeleteFarm') && (
+                    {hasPermission(user, 'canDeleteFarm') && (
                       <Button
                         variant="ghost"
                         size="sm"
@@ -554,7 +551,7 @@ export default function FarmsPage() {
                     onChange={(e) => setSiteName(e.target.value)}
                   />
 
-                  {hasPermission(role, 'canCreateSite') && (
+                  {hasPermission(user, 'canCreateSite') && (
                     <Button
                       onClick={handleSaveSite}
                       disabled={

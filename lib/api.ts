@@ -65,6 +65,17 @@ async function request<T>(
   return res.data
 }
 
+/** Effective permissions (matches backend modules). */
+export type UserPermissionsMap = {
+  farms: { read: boolean; write: boolean }
+  sites: { read: boolean; write: boolean }
+  evaluations: { read: boolean; write: boolean }
+  proposals: { read: boolean; write: boolean }
+  reports: { read: boolean; write: boolean }
+  finance: { read: boolean; write: boolean }
+  settings: { read: boolean; write: boolean }
+}
+
 // Auth
 export interface AuthUser {
   id: string
@@ -72,12 +83,19 @@ export interface AuthUser {
   name?: string
   firstName?: string
   lastName?: string
-  role: "admin" | "user"
+  role: "admin" | "editor" | "viewer" | "field_evaluator" | "sales_associate" | "user"
+  permissions?: UserPermissionsMap
 }
 
 export interface LoginResponse {
   success: boolean
   data: { user: AuthUser; token: string }
+}
+
+export interface RegisterRequestResponse {
+  success: boolean
+  message?: string
+  data: { submitted: true }
 }
 
 export const authApi = {
@@ -89,7 +107,7 @@ export const authApi = {
     email: string,
     password: string
   ) =>
-    request<LoginResponse>("POST", "/api/auth/register", {
+    request<RegisterRequestResponse>("POST", "/api/auth/register", {
       firstName,
       lastName,
       email,
@@ -148,6 +166,14 @@ export interface PolygonPoint {
   id: string
 }
 
+export interface InfrastructureSnapshot {
+  type: "polyhouse" | "shade_net" | "open_field"
+  minCost: number
+  maxCost: number
+  roiMonths: number
+  configVersion?: number
+}
+
 export interface SiteEvaluation {
   _id: string
   siteId?: string | { _id: string; name?: string; area?: number }
@@ -166,6 +192,10 @@ export interface SiteEvaluation {
   name?: string
   slope?: number
   infrastructureRecommendation?: string
+  numberOfUnits?: number
+  cropType?: string
+  calculatedInvestment?: number
+  infrastructureSnapshot?: InfrastructureSnapshot
   costEstimate?: number
   costCurrency?: string
   createdAt: string
@@ -194,6 +224,10 @@ export const siteEvaluationsApi = {
     elevationMeters?: number
     sunExposure?: "full" | "partial" | "shade"
     notes?: string
+    infrastructureType?: "polyhouse" | "shade_net" | "open_field"
+    numberOfUnits?: number
+    cropType?: string
+    calculatedInvestment?: number
   }) =>
     request<{ success: boolean; data: SiteEvaluationCreateResponse }>(
       "POST",
@@ -356,7 +390,9 @@ export const financeApi = {
 // Reports
 export interface ReportTypeItem {
   reportType: string
-  lastGeneratedAt: string
+  lastGeneratedAt: string | null
+  pdfFileName?: string | null
+  excelFileName?: string | null
 }
 
 export interface GenerateReportResponse {
@@ -379,12 +415,14 @@ export interface TeamMember {
   role: string
   status: "active" | "inactive"
   createdAt?: string
+  permissions?: UserPermissionsMap
 }
 
+/** Per-acre min/max cost (₹) and ROI timeline — single source: GET /api/settings/infrastructure */
 export interface InfrastructureConfig {
-  polyhouse: { minCostPerAcre: number; maxCostPerAcre: number; roiMonths: number }
-  shade_net: { minCostPerAcre: number; maxCostPerAcre: number; roiMonths: number }
-  open_field: { minCostPerAcre: number; maxCostPerAcre: number; roiMonths: number }
+  polyhouse: { minCost: number; maxCost: number; roiMonths: number }
+  shade_net: { minCost: number; maxCost: number; roiMonths: number }
+  open_field: { minCost: number; maxCost: number; roiMonths: number }
 }
 
 export const settingsApi = {
@@ -392,7 +430,10 @@ export const settingsApi = {
     request<{ success: boolean; data: TeamMember[] }>("GET", "/api/settings/team"),
   addTeamMember: (body: { name: string; email: string; role?: string }) =>
     request<{ success: boolean; data: TeamMember }>("POST", "/api/settings/team", body),
-  updateTeamMember: (userId: string, body: { role?: string; status?: string }) =>
+  updateTeamMember: (
+    userId: string,
+    body: { role?: string; status?: string; permissions?: Partial<UserPermissionsMap> }
+  ) =>
     request<{ success: boolean; data: TeamMember }>("PUT", `/api/settings/team/${userId}`, body),
   removeTeamMember: (userId: string) =>
     request<{ success: boolean; message: string }>("DELETE", `/api/settings/team/${userId}`),
@@ -400,6 +441,74 @@ export const settingsApi = {
     request<{ success: boolean; data: InfrastructureConfig }>("GET", "/api/settings/infrastructure"),
   saveInfrastructure: (body: Partial<InfrastructureConfig>) =>
     request<{ success: boolean; data: InfrastructureConfig }>("POST", "/api/settings/infrastructure", body),
+}
+
+export interface UserRequestRow {
+  _id: string
+  name: string
+  email: string
+  requestedRole: string | null
+  status: string
+  createdAt: string
+}
+
+export const userRequestsApi = {
+  listPending: () =>
+    request<{ success: boolean; data: UserRequestRow[] }>("GET", "/api/user-requests"),
+  approve: (
+    id: string,
+    body: { role: string; permissions?: Partial<UserPermissionsMap> }
+  ) =>
+    request<{ success: boolean; data: { user: TeamMember } }>(
+      "POST",
+      `/api/user-requests/${id}/approve`,
+      body
+    ),
+  reject: (id: string) =>
+    request<{ success: boolean; data: { message: string } }>(
+      "POST",
+      `/api/user-requests/${id}/reject`,
+      {}
+    ),
+}
+
+export const inviteApi = {
+  send: (body: { email: string; role?: string; permissions?: Partial<UserPermissionsMap> }) =>
+    request<{ success: boolean; data: { email: string; role: string; expiresAt: string } }>(
+      "POST",
+      "/api/invite",
+      body
+    ),
+  accept: (body: { token: string; name: string; password: string }) =>
+    request<{ success: boolean; data: { message: string; email: string } }>(
+      "POST",
+      "/api/invite/accept",
+      body
+    ),
+}
+
+export interface AuditLogRow {
+  _id: string
+  userId: string
+  userName: string | null
+  userEmail: string | null
+  action: string
+  module: string
+  entityId: string | null
+  before: unknown
+  after: unknown
+  ipAddress: string | null
+  createdAt: string
+}
+
+export const auditApi = {
+  listLogs: (params?: { module?: string; userId?: string; from?: string; to?: string; limit?: string }) =>
+    request<{ success: boolean; data: AuditLogRow[] }>(
+      "GET",
+      "/api/audit/logs",
+      undefined,
+      params as Record<string, string> | undefined
+    ),
 }
 
 // Insights (use backend base URL — api instance already sends Bearer token)

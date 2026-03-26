@@ -2,7 +2,6 @@
 
 import type React from "react"
 import { useState } from "react"
-import { useRouter } from "next/navigation"
 import Link from "next/link"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -10,11 +9,7 @@ import { Label } from "@/components/ui/label"
 import { authApi, ApiError } from "@/lib/api"
 
 const BRAND_GREEN = "#15803d"
-const FORGE_TOKEN_KEY = "forge_token"
-const FORGE_USER_KEY = "forge_user"
-
 export default function RegisterPage() {
-  const router = useRouter()
   const [firstName, setFirstName] = useState("")
   const [lastName, setLastName] = useState("")
   const [email, setEmail] = useState("")
@@ -22,6 +17,7 @@ export default function RegisterPage() {
   const [confirmPassword, setConfirmPassword] = useState("")
   const [isLoading, setIsLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [requestSent, setRequestSent] = useState(false)
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -37,12 +33,8 @@ export default function RegisterPage() {
     setIsLoading(true)
     try {
       const res = await authApi.register(firstName.trim(), lastName.trim(), email.trim(), password)
-      if (res.success && res.data.token && res.data.user) {
-        if (typeof window !== "undefined") {
-          localStorage.setItem(FORGE_TOKEN_KEY, res.data.token)
-          localStorage.setItem(FORGE_USER_KEY, JSON.stringify(res.data.user))
-        }
-        router.push("/dashboard/overview")
+      if (res.success && res.data?.submitted) {
+        setRequestSent(true)
       }
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Registration failed")
@@ -67,6 +59,12 @@ export default function RegisterPage() {
             <h2 className="text-2xl font-semibold text-gray-900">Create an account</h2>
             <p className="text-muted-foreground mt-1">Sign up to get started</p>
           </div>
+
+          {requestSent && (
+            <p className="mb-4 text-sm text-[#15803d] font-medium rounded-md border border-[#15803d]/30 bg-[#15803d]/5 px-3 py-2">
+              Request sent. Wait for admin approval.
+            </p>
+          )}
 
           <form onSubmit={handleSubmit} className="space-y-4">
             <div className="grid grid-cols-2 gap-4">
@@ -130,7 +128,7 @@ export default function RegisterPage() {
             )}
             <Button
               type="submit"
-              disabled={isLoading}
+              disabled={isLoading || requestSent}
               className="w-full h-11 text-base font-medium"
               style={{ backgroundColor: BRAND_GREEN }}
             >

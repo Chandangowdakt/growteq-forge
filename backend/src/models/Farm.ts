@@ -9,7 +9,8 @@ export interface IFarm extends Document {
   state?: string
   district?: string
   deletedAt?: Date
-  userId: mongoose.Types.ObjectId
+  /** Owner (optional for legacy documents). */
+  userId?: mongoose.Types.ObjectId
   createdAt: Date
   updatedAt: Date
 }
@@ -24,7 +25,7 @@ const farmSchema = new Schema<IFarm>(
     state: { type: String, trim: true },
     district: { type: String, trim: true },
     deletedAt: { type: Date },
-    userId: { type: Schema.Types.ObjectId, ref: "User", required: true },
+    userId: { type: Schema.Types.ObjectId, ref: "User", required: false },
   },
   { timestamps: true }
 )

@@ -1,7 +1,7 @@
 "use client"
 
 import { useCallback, useEffect, useMemo, useState } from "react"
-import { useRouter, useSearchParams } from "next/navigation"
+import { useSearchParams } from "next/navigation"
 import Link from "next/link"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
@@ -17,16 +17,13 @@ import {
 import { Badge } from "@/components/ui/badge"
 import { formatINR } from "@/lib/utils"
 import { toast } from "@/hooks/use-toast"
-import { siteEvaluationsApi } from "@/lib/api"
+import { siteEvaluationsApi, settingsApi, type InfrastructureConfig } from "@/lib/api"
 
 type InfrastructureKey = "polyhouse" | "shade_net" | "open_field"
 
-const INFRA_COSTS: Record<InfrastructureKey, { perAcre: number; roiMonths: number; returnMultiplier: number }> =
-  {
-    polyhouse: { perAcre: 2_500_000, roiMonths: 18, returnMultiplier: 1.375 },
-    shade_net: { perAcre: 200_000, roiMonths: 6, returnMultiplier: 1.15 },
-    open_field: { perAcre: 50_000, roiMonths: 3, returnMultiplier: 1.15 },
-  }
+function avgPerAcre(row: { minCost: number; maxCost: number }): number {
+  return Math.round((row.minCost + row.maxCost) / 2)
+}
 
 interface SiteData {
   _id: string
@@ -40,13 +37,14 @@ const baseURL =
 
 export default function NewSiteEvaluationPage() {
   const searchParams = useSearchParams()
-  const router = useRouter()
 
   const siteId = searchParams.get("siteId") || ""
   const farmId = searchParams.get("farmId") || ""
 
   const [site, setSite] = useState<SiteData | null>(null)
   const [loading, setLoading] = useState(true)
+  const [infraConfig, setInfraConfig] = useState<InfrastructureConfig | null>(null)
+  const [infraLoading, setInfraLoading] = useState(true)
   const [submitting, setSubmitting] = useState(false)
 
   const [infrastructureType, setInfrastructureType] = useState<InfrastructureKey | null>(null)
@@ -56,6 +54,25 @@ export default function NewSiteEvaluationPage() {
   const [waterAvailability, setWaterAvailability] = useState<string>("Borewell")
   const [slope, setSlope] = useState<string>("2.5")
   const [notes, setNotes] = useState<string>("")
+
+  useEffect(() => {
+    let cancelled = false
+    setInfraLoading(true)
+    settingsApi
+      .getInfrastructure()
+      .then((res) => {
+        if (!cancelled && res?.data) setInfraConfig(res.data)
+      })
+      .catch(() => {
+        if (!cancelled) toast({ title: "Could not load infrastructure pricing", variant: "destructive" })
+      })
+      .finally(() => {
+        if (!cancelled) setInfraLoading(false)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [])
 
   const loadSite = useCallback(async () => {
     if (!siteId) {
@@ -98,7 +115,7 @@ export default function NewSiteEvaluationPage() {
   }, [loadSite])
 
   const { costPerAcre, totalInvestment, expectedReturn, roiMonths, profit } = useMemo(() => {
-    if (!site || !infrastructureType || !INFRA_COSTS[infrastructureType]) {
+    if (!site || !infrastructureType || !infraConfig?.[infrastructureType]) {
       return {
         costPerAcre: 0,
         totalInvestment: 0,
@@ -107,19 +124,19 @@ export default function NewSiteEvaluationPage() {
         profit: 0,
       }
     }
-    const cfg = INFRA_COSTS[infrastructureType]
-    const costPerAcreValue = cfg.perAcre
+    const row = infraConfig[infrastructureType]
+    const costPerAcreValue = avgPerAcre(row)
     const totalInv = site.area * costPerAcreValue * Math.max(1, numberOfUnits || 0)
-    const expected = totalInv * cfg.returnMultiplier
+    const expected = Math.round(totalInv * 1.15)
     const profitValue = expected - totalInv
     return {
       costPerAcre: costPerAcreValue,
       totalInvestment: totalInv,
       expectedReturn: expected,
-      roiMonths: cfg.roiMonths,
+      roiMonths: row.roiMonths,
       profit: profitValue,
     }
-  }, [site, infrastructureType, numberOfUnits])
+  }, [site, infrastructureType, numberOfUnits, infraConfig])
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -131,9 +148,6 @@ export default function NewSiteEvaluationPage() {
       const slopeValue = Number(slope)
       const units = Math.max(1, numberOfUnits || 0)
 
-      console.log("Submitting evaluation with siteId:", siteId)
-      console.log("Submitting evaluation with farmId:", farmId)
-
       const res = await siteEvaluationsApi.create({
         siteId,
         farmId,
@@ -141,20 +155,18 @@ export default function NewSiteEvaluationPage() {
         waterAvailability,
         slopePercentage: slopeValue,
         notes: notes || undefined,
-        // extra fields passed through to backend
         infrastructureType,
         numberOfUnits: units,
         cropType,
         calculatedInvestment: totalInvestment || 0,
-      } as any)
+      })
 
       if (res.success && res.data) {
-        const cfg = INFRA_COSTS[infrastructureType]
+        const row = infraConfig?.[infrastructureType]
         toast({
           title: "Evaluation submitted!",
-          description: `Investment: ${formatINR(totalInvestment || 0)} | ROI: ${cfg.roiMonths} months`,
+          description: `Investment: ${formatINR(totalInvestment || 0)} | ROI: ${row?.roiMonths ?? "—"} months`,
         })
-        // Force hard navigation to ensure fresh data
         window.location.href = `/dashboard/farms/${farmId}/sites/${siteId}`
       }
     } catch (err) {
@@ -180,7 +192,7 @@ export default function NewSiteEvaluationPage() {
     }
   }
 
-  if (loading) {
+  if (loading || infraLoading || !infraConfig) {
     return (
       <div className="space-y-6">
         <Link
@@ -189,7 +201,9 @@ export default function NewSiteEvaluationPage() {
         >
           Back to Evaluations
         </Link>
-        <p className="text-muted-foreground text-sm">Loading site…</p>
+        <p className="text-muted-foreground text-sm">
+          {loading ? "Loading site…" : "Loading infrastructure settings…"}
+        </p>
       </div>
     )
   }
@@ -241,7 +255,7 @@ export default function NewSiteEvaluationPage() {
             <CardContent className="grid gap-3 sm:grid-cols-3">
               {(["polyhouse", "shade_net", "open_field"] as InfrastructureKey[]).map((key) => {
                 const selected = infrastructureType === key
-                const cfg = INFRA_COSTS[key]
+                const row = infraConfig[key]
                 return (
                   <button
                     type="button"
@@ -255,11 +269,10 @@ export default function NewSiteEvaluationPage() {
                   >
                     <span className="font-semibold">{infraLabel(key)}</span>
                     <span className="text-xs text-muted-foreground">
-                      Cost per acre: {formatINR(cfg.perAcre)}
+                      ₹{row.minCost.toLocaleString("en-IN")} – ₹{row.maxCost.toLocaleString("en-IN")}{" "}
+                      /acre
                     </span>
-                    <span className="text-xs text-muted-foreground">
-                      ROI: {cfg.roiMonths} months
-                    </span>
+                    <span className="text-xs text-muted-foreground">ROI: {row.roiMonths} months</span>
                   </button>
                 )
               })}
@@ -396,7 +409,7 @@ export default function NewSiteEvaluationPage() {
 
               <div className="space-y-1 text-sm">
                 <div className="flex justify-between">
-                  <span className="text-muted-foreground">Cost per acre</span>
+                  <span className="text-muted-foreground">Avg cost per acre</span>
                   <span className="font-semibold">
                     {infrastructureType ? formatINR(costPerAcre) : "—"}
                   </span>
@@ -441,4 +454,3 @@ export default function NewSiteEvaluationPage() {
     </div>
   )
 }
-

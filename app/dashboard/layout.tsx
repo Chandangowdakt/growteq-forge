@@ -28,6 +28,7 @@ import { WelcomeModal } from "@/components/welcome-modal"
 import { SafeImage } from "@/components/ui/safe-image"
 import { NotificationsDrawer } from "@/components/notifications/notifications-drawer"
 import { ProtectedLayout } from "@/app/dashboard/ProtectedLayout"
+import { canReadModule } from "@/lib/permissions"
 export default function DashboardLayoutWrapper({
   children,
 }: {
@@ -84,6 +85,18 @@ export default function DashboardLayoutWrapper({
     { name: "Insights", href: "/dashboard/insights", icon: Lightbulb },
     { name: "Settings", href: "/dashboard/settings", icon: Settings },
   ]
+  const filteredNavigation = navigation.filter((item) => {
+    if (item.href === "/dashboard/settings") return canReadModule(authUser, "settings")
+    if (item.href === "/dashboard/finance") return canReadModule(authUser, "finance")
+    if (item.href === "/dashboard/reports") return canReadModule(authUser, "reports")
+    if (item.href === "/dashboard/farms" || item.href === "/dashboard/crops") {
+      return canReadModule(authUser, "farms")
+    }
+    if (item.href === "/dashboard/dashboard" || item.href === "/dashboard/insights") {
+      return canReadModule(authUser, "farms")
+    }
+    return true
+  })
 
   if (!mounted) {
     return <div className="h-screen bg-gray-50" />
@@ -132,7 +145,7 @@ export default function DashboardLayoutWrapper({
                 isExpanded ? "px-3" : "px-2"
               )}
             >
-              {navigation.map((item) => {
+              {filteredNavigation.map((item) => {
                 const isActive = pathname === item.href
                 return (
                   <Link

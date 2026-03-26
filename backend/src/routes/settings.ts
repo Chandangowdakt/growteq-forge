@@ -8,17 +8,20 @@ import {
   saveInfrastructure,
 } from "../controllers/settingsController"
 import { authMiddleware } from "../middleware/auth"
-import { requireRole } from "../middleware/roleMiddleware"
+import { checkPermission } from "../middleware/permissionMiddleware"
 
 const router: IRouter = Router()
 
 router.use(authMiddleware)
 
-router.get("/team", listTeam)
-router.post("/team", addTeamMember)
-router.put("/team/:userId", requireRole("admin"), updateTeamMember)
-router.delete("/team/:userId", requireRole("admin"), removeTeamMember)
+// Readable by any authenticated user (evaluations, cost engine, etc.)
 router.get("/infrastructure", getInfrastructure)
-router.post("/infrastructure", requireRole("admin"), saveInfrastructure)
+
+router.post("/infrastructure", checkPermission("settings", "write"), saveInfrastructure)
+
+router.get("/team", checkPermission("settings", "read"), listTeam)
+router.post("/team", checkPermission("settings", "write"), addTeamMember)
+router.put("/team/:userId", checkPermission("settings", "write"), updateTeamMember)
+router.delete("/team/:userId", checkPermission("settings", "write"), removeTeamMember)
 
 export default router

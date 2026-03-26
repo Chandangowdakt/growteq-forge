@@ -20,6 +20,9 @@ import costRoutes from "./routes/cost"
 import financeRoutes from "./routes/finance"
 import insightsRoutes from "./routes/insights"
 import settingsRoutes from "./routes/settings"
+import auditRoutes from "./routes/audit"
+import inviteRoutes from "./routes/invite"
+import userRequestsRoutes from "./routes/userRequests"
 
 if (!process.env.JWT_SECRET) {
   console.error("[Startup Error] JWT_SECRET is not defined.")
@@ -128,6 +131,9 @@ app.use("/api/cost", costRoutes)
 app.use("/api/finance", financeRoutes)
 app.use("/api/insights", insightsRoutes)
 app.use("/api/settings", settingsRoutes)
+app.use("/api/audit", auditRoutes)
+app.use("/api/invite", inviteRoutes)
+app.use("/api/user-requests", userRequestsRoutes)
 
 app.use(errorHandler)
 

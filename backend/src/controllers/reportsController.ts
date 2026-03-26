@@ -10,6 +10,7 @@ import { Proposal } from "../models/Proposal"
 import { Site } from "../models/Site"
 import { Farm } from "../models/Farm"
 import { createNotification } from "./notificationController"
+import { getInfrastructureMap } from "../services/infrastructureConfigService"
  
 const REPORT_TYPES = [
   "site_evaluation",
@@ -19,22 +20,6 @@ const REPORT_TYPES = [
   "site_comparison",
   "executive_summary",
 ] as const
-
-function getInfraConfig(): any {
-  try {
-    const configPath = path.join(__dirname, "../config/infrastructure.json")
-    if (fs.existsSync(configPath)) {
-      return JSON.parse(fs.readFileSync(configPath, "utf8"))
-    }
-  } catch {
-    // ignore
-  }
-  return {
-    polyhouse: { minCostPerAcre: 2500000, maxCostPerAcre: 3500000, roiMonths: 18 },
-    shade_net: { minCostPerAcre: 200000, maxCostPerAcre: 500000, roiMonths: 6 },
-    open_field: { minCostPerAcre: 50000, maxCostPerAcre: 200000, roiMonths: 3 },
-  }
-}
  
 async function getMapboxImage(geojson: any): Promise<string | null> {
   console.log("=== getMapboxImage called ===")
@@ -470,7 +455,10 @@ export const listReportTypes = asyncHandler(async (_req: AuthenticatedRequest, r
         .filter((f) => f.includes(rt.reportType) && (f.endsWith(".pdf") || f.endsWith(".csv")))
         .sort()
         .reverse()
- 
+
+      const pdfFiles = matching.filter((f) => f.toLowerCase().endsWith(".pdf")).sort().reverse()
+      const excelFiles = matching.filter((f) => f.toLowerCase().endsWith(".csv")).sort().reverse()
+
       let lastGeneratedAt: string | null = null
       if (matching.length > 0) {
         try {
@@ -480,11 +468,13 @@ export const listReportTypes = asyncHandler(async (_req: AuthenticatedRequest, r
           lastGeneratedAt = null
         }
       }
- 
+
       return {
         reportType: rt.reportType,
         title: rt.title,
         lastGeneratedAt,
+        pdfFileName: pdfFiles[0] ?? null,
+        excelFileName: excelFiles[0] ?? null,
       }
     })
  
@@ -922,18 +912,34 @@ export const generateReport = asyncHandler(
           // Cost & ROI (if prop exists)
           if (prop) {
             const inv = prop.investmentValue || 0
-            const infraType = prop.infrastructureType || "polyhouse"
-            const infraConfig = getInfraConfig()
+            const infraTypeRaw = String(prop.infrastructureType || "polyhouse").toLowerCase().replace(/\s+/g, "_")
+            const infraMap = await getInfrastructureMap()
+            const infraKey =
+              infraTypeRaw === "shade_net" || infraTypeRaw === "shadenet"
+                ? "shade_net"
+                : infraTypeRaw === "open_field" || infraTypeRaw === "openfield"
+                  ? "open_field"
+                  : "polyhouse"
+
+            const snap = ev?.infrastructureSnapshot as
+              | { type?: string; roiMonths?: number }
+              | undefined
+            const roiMonthsForPdf =
+              snap != null &&
+              typeof snap.roiMonths === "number" &&
+              Number.isFinite(snap.roiMonths)
+                ? snap.roiMonths
+                : prop.roiMonths ?? infraMap[infraKey]?.roiMonths
 
             let costRows: string[][] = []
-            if (infraType === "polyhouse") {
+            if (infraKey === "polyhouse") {
               costRows = [
                 ["Polyhouse Structure", `Rs.${Math.round(inv * 0.68).toLocaleString("en-IN")}`],
                 ["Irrigation System", `Rs.${Math.round(inv * 0.18).toLocaleString("en-IN")}`],
                 ["Climate Control", `Rs.${Math.round(inv * 0.11).toLocaleString("en-IN")}`],
                 ["Miscellaneous", `Rs.${Math.round(inv * 0.03).toLocaleString("en-IN")}`],
               ]
-            } else if (infraType === "shade_net") {
+            } else if (infraKey === "shade_net") {
               costRows = [
                 ["Shade Net Structure", `Rs.${Math.round(inv * 0.65).toLocaleString("en-IN")}`],
                 ["Support Framework", `Rs.${Math.round(inv * 0.20).toLocaleString("en-IN")}`],
@@ -960,11 +966,11 @@ export const generateReport = asyncHandler(
               rows: [],
               leftCol: [
                 ["Total Investment", `Rs.${Math.round(inv).toLocaleString("en-IN")}`],
-                ["ROI Timeline", `${prop.roiMonths || infraConfig?.[infraType]?.roiMonths || "N/A"} months`],
+                ["ROI Timeline", `${roiMonthsForPdf ?? "N/A"} months`],
               ],
               rightCol: [
                 ["Expected Return", `Rs.${Math.round(inv * 1.15).toLocaleString("en-IN")}`],
-                ["Profit Margin", infraType === "polyhouse" ? "37.5%" : "15%"],
+                ["Profit Margin", infraKey === "polyhouse" ? "37.5%" : "15%"],
               ],
             })
           }
