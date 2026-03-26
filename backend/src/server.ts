@@ -149,6 +149,12 @@ async function start() {
   await connectDb()
   copyLogoForPDF()
   startServer(PORT)
+  console.log("=== Environment Check ===")
+  console.log("NODE_ENV:", process.env.NODE_ENV)
+  console.log("MAPBOX_TOKEN set:", !!process.env.MAPBOX_TOKEN)
+  console.log("MAPBOX_TOKEN preview:", process.env.MAPBOX_TOKEN?.substring(0, 15))
+  console.log("FRONTEND_URL:", process.env.FRONTEND_URL)
+  console.log("PORT:", process.env.PORT)
 }
 
 start().catch((err) => {

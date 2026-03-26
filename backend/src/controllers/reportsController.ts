@@ -37,6 +37,15 @@ function getInfraConfig(): any {
 }
  
 async function getMapboxImage(geojson: any): Promise<string | null> {
+  console.log("=== getMapboxImage called ===")
+  console.log("MAPBOX_TOKEN set:", !!process.env.MAPBOX_TOKEN)
+  console.log(
+    "MAPBOX_TOKEN value preview:",
+    process.env.MAPBOX_TOKEN?.substring(0, 15) + "..."
+  )
+  console.log("geojson received:", !!geojson)
+  console.log("coords length:", geojson?.coordinates?.[0]?.length)
+
   const token = process.env.MAPBOX_TOKEN
   if (!token) {
     console.log("No MAPBOX_TOKEN set")
@@ -65,7 +74,10 @@ async function getMapboxImage(geojson: any): Promise<string | null> {
     )
  
     const url = `https://api.mapbox.com/styles/v1/mapbox/satellite-streets-v12/static/geojson(${overlay})/${centerLng},${centerLat},16,0/600x350?access_token=${token}`
- 
+
+    console.log("Mapbox URL length:", url.length)
+    console.log("Mapbox URL preview:", url.substring(0, 100))
+
     console.log("Fetching Mapbox satellite image...")
  
     const buffer = await new Promise<Buffer | null>((resolve) => {
@@ -90,7 +102,10 @@ async function getMapboxImage(geojson: any): Promise<string | null> {
         resolve(null)
       })
     })
- 
+
+    console.log("Buffer received:", !!buffer)
+    console.log("Buffer size:", buffer?.length)
+
     if (!buffer) return null
     console.log("✓ Mapbox satellite image fetched, size:", buffer.length)
     return buffer.toString("base64")
@@ -191,6 +206,10 @@ function createPDF(
   for (const section of sections) {
     // ── Site Map section ──────────────────────────────────────────
     if (section.heading === "Site Map") {
+      console.log("=== Site Map section hit ===")
+      console.log("section.mapImage exists:", !!section.mapImage)
+      console.log("section.mapImage length:", section.mapImage?.length)
+
       if (y > 220) {
         doc.addPage()
         y = 20
@@ -951,7 +970,19 @@ export const generateReport = asyncHandler(
           }
 
           // ONE map for this ONE site
+          console.log("=== Calling getMapboxImage for site:", site.name)
+          console.log("Site geojson type:", site.geojson?.type)
+          console.log(
+            "Site geojson coords count:",
+            site.geojson?.coordinates?.[0]?.length
+          )
+
           const mapBase64 = site.geojson ? await getMapboxImage(site.geojson) : null
+          console.log(
+            "mapBase64 result:",
+            mapBase64 ? `string length ${mapBase64.length}` : "NULL"
+          )
+
           allSections.push({
             heading: "Site Map",
             rows: [],
