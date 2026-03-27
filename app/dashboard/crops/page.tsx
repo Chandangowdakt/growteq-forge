@@ -1,5 +1,6 @@
 'use client'
 
+import { DashboardPageGuard } from '@/components/dashboard/dashboard-page-guard'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { CheckCircle, AlertCircle } from 'lucide-react'
@@ -39,7 +40,7 @@ const cropCompatibility = [
   { crop: 'Wheat', polyhouse: false, shadeNet: false, openField: true },
 ]
 
-export default function CropsPage() {
+function CropsPageContent() {
   return (
     <div className="space-y-6">
       <div>
@@ -143,5 +144,13 @@ export default function CropsPage() {
         </CardContent>
       </Card>
     </div>
+  )
+}
+
+export default function CropsPage() {
+  return (
+    <DashboardPageGuard module="farms">
+      <CropsPageContent />
+    </DashboardPageGuard>
   )
 }

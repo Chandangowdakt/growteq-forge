@@ -26,6 +26,7 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog"
 import { Settings as SettingsIcon, Users, MapPin, Bell, Lock, ScrollText, ClipboardList } from "lucide-react"
+import { Badge } from "@/components/ui/badge"
 import { Checkbox } from "@/components/ui/checkbox"
 import {
   settingsApi,
@@ -59,6 +60,30 @@ const MODULE_LABELS: Record<PermissionModule, string> = {
   settings: "Settings",
 }
 
+/** Stored/API role values — must match backend `normalizeTeamMemberStoredRole`. */
+type TeamRoleValue = "admin" | "field_evaluator" | "sales_associate"
+
+function teamRoleFromMember(role: string): TeamRoleValue {
+  const r = (role ?? "").toLowerCase()
+  if (r === "admin") return "admin"
+  if (r === "field_evaluator" || r === "editor") return "field_evaluator"
+  return "sales_associate"
+}
+
+function teamRoleFromNormalizedRequest(norm: "admin" | "editor" | "viewer"): TeamRoleValue {
+  if (norm === "admin") return "admin"
+  if (norm === "editor") return "field_evaluator"
+  return "sales_associate"
+}
+
+function formatTeamRoleLabel(role: string): string {
+  const r = (role ?? "").toLowerCase()
+  if (r === "admin") return "Admin (Sales Director)"
+  if (r === "field_evaluator" || r === "editor") return "Field Evaluator"
+  if (r === "sales_associate" || r === "viewer" || r === "user") return "Sales Associate"
+  return role
+}
+
 const MAPBOX_KEY = "mapbox_key"
 const MAP_CENTER_LAT = "map_center_lat"
 const MAP_CENTER_LNG = "map_center_lng"
@@ -76,10 +101,10 @@ export default function SettingsPage() {
   const [addOpen, setAddOpen] = useState(false)
   const [addName, setAddName] = useState("")
   const [addEmail, setAddEmail] = useState("")
-  const [addRole, setAddRole] = useState<"admin" | "editor" | "viewer">("viewer")
+  const [addRole, setAddRole] = useState<TeamRoleValue>("sales_associate")
   const [addSubmitting, setAddSubmitting] = useState(false)
   const [editMember, setEditMember] = useState<TeamMember | null>(null)
-  const [editRole, setEditRole] = useState<"admin" | "editor" | "viewer">("viewer")
+  const [editRole, setEditRole] = useState<TeamRoleValue>("sales_associate")
   const [editStatus, setEditStatus] = useState<"active" | "inactive">("active")
   const [editPermissions, setEditPermissions] = useState<UserPermissionsMap>(() =>
     getDefaultPermissions("viewer")
@@ -112,7 +137,7 @@ export default function SettingsPage() {
   const [userRequests, setUserRequests] = useState<UserRequestRow[]>([])
   const [userRequestsLoading, setUserRequestsLoading] = useState(false)
   const [approveFor, setApproveFor] = useState<UserRequestRow | null>(null)
-  const [approveRole, setApproveRole] = useState<"admin" | "editor" | "viewer">("viewer")
+  const [approveRole, setApproveRole] = useState<TeamRoleValue>("sales_associate")
   const [approvePermissions, setApprovePermissions] = useState<UserPermissionsMap>(() =>
     getDefaultPermissions("viewer")
   )
@@ -217,7 +242,7 @@ export default function SettingsPage() {
       setAddOpen(false)
       setAddName("")
       setAddEmail("")
-      setAddRole("viewer")
+      setAddRole("sales_associate")
       loadTeam()
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to add")
@@ -228,7 +253,7 @@ export default function SettingsPage() {
 
   const openEditMember = (member: TeamMember) => {
     setEditMember(member)
-    setEditRole(normalizeRole(member.role) as "admin" | "editor" | "viewer")
+    setEditRole(teamRoleFromMember(member.role))
     setEditStatus((member.status === "active" ? "active" : "inactive") as "active" | "inactive")
     setEditPermissions(mergeMemberPermissions(member))
   }
@@ -301,11 +326,10 @@ export default function SettingsPage() {
 
   const openApproveRequest = (row: UserRequestRow) => {
     setApproveFor(row)
-    const r = normalizeRole(row.requestedRole ?? "") as "admin" | "editor" | "viewer"
-    const role =
-      r === "admin" || r === "editor" || r === "viewer" ? r : "viewer"
-    setApproveRole(role)
-    setApprovePermissions(getDefaultPermissions(role))
+    const r = normalizeRole(row.requestedRole ?? "")
+    const stored = teamRoleFromNormalizedRequest(r)
+    setApproveRole(stored)
+    setApprovePermissions(getDefaultPermissions(stored))
   }
 
   const closeApproveRequest = () => {
@@ -365,9 +389,14 @@ export default function SettingsPage() {
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="text-3xl font-bold tracking-tight flex items-center gap-2">
+        <h1 className="text-3xl font-bold tracking-tight flex flex-wrap items-center gap-2">
           <SettingsIcon className="h-8 w-8 text-[#387F43]" />
           Settings
+          {showUserRequests && (
+            <Badge variant="secondary" className="font-normal text-sm">
+              Approve Requests ({userRequestsLoading ? "…" : userRequests.length})
+            </Badge>
+          )}
         </h1>
         <p className="text-muted-foreground">Configure Forge sales and evaluation tools</p>
       </div>
@@ -468,7 +497,7 @@ export default function SettingsPage() {
                           <TableRow key={member._id}>
                             <TableCell className="font-medium">{member.name}</TableCell>
                             <TableCell>{member.email}</TableCell>
-                            <TableCell>{member.role}</TableCell>
+                            <TableCell>{formatTeamRoleLabel(member.role)}</TableCell>
                             <TableCell>
                               <span
                                 className={`inline-flex px-2 py-1 rounded-full text-xs font-medium ${
@@ -916,7 +945,7 @@ export default function SettingsPage() {
                     id="editRole"
                     value={editRole}
                     onChange={(e) => {
-                      const r = e.target.value as "admin" | "editor" | "viewer"
+                      const r = e.target.value as TeamRoleValue
                       const prev = editRole
                       setEditRole(r)
                       if (r === "admin") {
@@ -927,9 +956,9 @@ export default function SettingsPage() {
                     }}
                     className="w-full border rounded px-3 py-2 text-sm"
                   >
-                    <option value="viewer">viewer</option>
-                    <option value="editor">editor</option>
-                    <option value="admin">admin</option>
+                    <option value="admin">Admin (Sales Director)</option>
+                    <option value="field_evaluator">Field Evaluator</option>
+                    <option value="sales_associate">Sales Associate</option>
                   </select>
                 </div>
                 <div className="space-y-2">
@@ -1073,12 +1102,12 @@ export default function SettingsPage() {
               <select
                 id="addRole"
                 value={addRole}
-                onChange={(e) => setAddRole(e.target.value as "admin" | "editor" | "viewer")}
+                onChange={(e) => setAddRole(e.target.value as TeamRoleValue)}
                 className="w-full border rounded px-3 py-2"
               >
-                <option value="viewer">Sales Associate (viewer)</option>
-                <option value="editor">Field Evaluator (editor)</option>
-                <option value="admin">admin</option>
+                <option value="admin">Admin (Sales Director)</option>
+                <option value="field_evaluator">Field Evaluator</option>
+                <option value="sales_associate">Sales Associate</option>
               </select>
             </div>
           </div>
@@ -1126,15 +1155,15 @@ export default function SettingsPage() {
                     id="approveRole"
                     value={approveRole}
                     onChange={(e) => {
-                      const r = e.target.value as "admin" | "editor" | "viewer"
+                      const r = e.target.value as TeamRoleValue
                       setApproveRole(r)
                       setApprovePermissions(getDefaultPermissions(r))
                     }}
                     className="w-full border rounded px-3 py-2"
                   >
-                    <option value="viewer">Sales Associate (viewer)</option>
-                    <option value="editor">Field Evaluator (editor)</option>
-                    <option value="admin">admin</option>
+                    <option value="admin">Admin (Sales Director)</option>
+                    <option value="field_evaluator">Field Evaluator</option>
+                    <option value="sales_associate">Sales Associate</option>
                   </select>
                 </div>
                 {(() => {

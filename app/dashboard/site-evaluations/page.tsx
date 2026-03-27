@@ -1,7 +1,8 @@
 "use client"
 
-import { useState, useEffect, useCallback } from "react"
+import { useState, useEffect, useCallback, useMemo } from "react"
 import Link from "next/link"
+import { useRouter } from "next/navigation"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import {
@@ -12,6 +13,16 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog"
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import {
@@ -30,35 +41,66 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table"
-import { siteEvaluationsApi, farmsApi, type Farm, type SiteEvaluation } from "@/lib/api"
+import { siteEvaluationsApi, farmsApi, reportsApi, type Farm, type SiteEvaluation } from "@/lib/api"
 import { formatDistanceToNow } from "date-fns"
 import { toast } from "@/hooks/use-toast"
-import { hasPermission } from "@/lib/permissions"
+import { hasPermission, canWriteModule } from "@/lib/permissions"
 import { useAuth } from "@/app/context/auth-context"
+import { DashboardPageGuard } from "@/components/dashboard/dashboard-page-guard"
 
-const baseURL =
-  (typeof process !== "undefined" && process.env.NEXT_PUBLIC_API_URL) || "http://localhost:5000"
+type EvalRow = SiteEvaluation & { proposalId?: string | null }
 
-function statusBadge(status: string) {
-  const map: Record<string, string> = {
-    draft: "bg-gray-100 text-gray-800",
-    submitted: "bg-blue-100 text-blue-800",
-    approved: "bg-green-100 text-green-800",
-    rejected: "bg-red-100 text-red-800",
-  }
-  return map[status] ?? "bg-gray-100 text-gray-800"
+function idFromRef(ref: unknown): string {
+  if (ref == null) return ""
+  if (typeof ref === "object" && ref !== null && "_id" in ref)
+    return String((ref as { _id: string })._id)
+  return String(ref)
 }
 
-export default function SiteEvaluationsPage() {
+function farmDisplayName(ev: EvalRow): string {
+  const f = ev.farmId
+  if (f && typeof f === "object" && "name" in f && (f as { name?: string }).name)
+    return String((f as { name: string }).name)
+  return "Unknown Farm"
+}
+
+function siteDisplayName(ev: EvalRow): string {
+  const s = ev.siteId
+  if (s && typeof s === "object" && "name" in s && (s as { name?: string }).name)
+    return String((s as { name: string }).name)
+  if (ev.name?.trim()) return ev.name
+  return "Unknown Site"
+}
+
+function siteIdString(ev: EvalRow): string | null {
+  const s = ev.siteId
+  if (!s) return null
+  if (typeof s === "object" && "_id" in s && (s as { _id?: string })._id)
+    return String((s as { _id: string })._id)
+  if (typeof s === "string") return s
+  return null
+}
+
+function statusBadgeClass(status: string) {
+  const map: Record<string, string> = {
+    draft: "bg-gray-100 text-gray-800 border-gray-200",
+    submitted: "bg-blue-100 text-blue-800 border-blue-200",
+    approved: "bg-green-100 text-green-800 border-green-200",
+    rejected: "bg-red-100 text-red-800 border-red-200",
+  }
+  return map[status] ?? "bg-gray-100 text-gray-800 border-gray-200"
+}
+
+function SiteEvaluationsPageContent() {
   const { user } = useAuth()
-  const [evaluations, setEvaluations] = useState<(SiteEvaluation & { siteId?: { name?: string; area?: number }; proposalId?: string | null })[]>([])
+  const router = useRouter()
+  const [evaluations, setEvaluations] = useState<EvalRow[]>([])
   const [farms, setFarms] = useState<Farm[]>([])
   const [sites, setSites] = useState<{ _id: string; name: string; area: number }[]>([])
   const [sitesLoading, setSitesLoading] = useState(false)
   const [loading, setLoading] = useState(true)
   const [formOpen, setFormOpen] = useState(false)
   const [submitting, setSubmitting] = useState(false)
-  const [selectedFarmId, setSelectedFarmId] = useState<string>("")
   const [form, setForm] = useState({
     siteId: "",
     farmId: "",
@@ -69,11 +111,24 @@ export default function SiteEvaluationsPage() {
     sunExposure: "full" as "full" | "partial" | "shade",
     notes: "",
   })
+
+  const [statusFilter, setStatusFilter] = useState<string>("all")
+  const [farmFilter, setFarmFilter] = useState<string>("all")
+  const [searchSite, setSearchSite] = useState("")
+  const [deleteTarget, setDeleteTarget] = useState<EvalRow | null>(null)
+  const [deleteSubmitting, setDeleteSubmitting] = useState(false)
+  const [downloadingId, setDownloadingId] = useState<string | null>(null)
+
   const fetchEvaluations = useCallback(async () => {
     setLoading(true)
     try {
       const res = await siteEvaluationsApi.list()
-      if (res.success && res.data) setEvaluations(res.data)
+      if (res.success && res.data) {
+        const sorted = [...(res.data as EvalRow[])].sort(
+          (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
+        )
+        setEvaluations(sorted)
+      }
     } catch {
       setEvaluations([])
     } finally {
@@ -92,7 +147,8 @@ export default function SiteEvaluationsPage() {
 
   useEffect(() => {
     fetchEvaluations()
-  }, [fetchEvaluations])
+    fetchFarms()
+  }, [fetchEvaluations, fetchFarms])
 
   useEffect(() => {
     if (formOpen) fetchFarms()
@@ -120,6 +176,27 @@ export default function SiteEvaluationsPage() {
     else setSites([])
   }, [form.farmId, fetchSitesForFarm])
 
+  const farmFilterOptions = useMemo(() => {
+    const m = new Map<string, string>()
+    for (const ev of evaluations) {
+      const id = idFromRef(ev.farmId)
+      if (!id) continue
+      m.set(id, farmDisplayName(ev))
+    }
+    return [...m.entries()].sort((a, b) => a[1].localeCompare(b[1]))
+  }, [evaluations])
+
+  const filteredEvaluations = useMemo(() => {
+    let rows = [...evaluations]
+    if (statusFilter !== "all") rows = rows.filter((e) => e.status === statusFilter)
+    if (farmFilter !== "all") rows = rows.filter((e) => idFromRef(e.farmId) === farmFilter)
+    if (searchSite.trim()) {
+      const q = searchSite.trim().toLowerCase()
+      rows = rows.filter((e) => siteDisplayName(e).toLowerCase().includes(q))
+    }
+    return rows
+  }, [evaluations, statusFilter, farmFilter, searchSite])
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     if (!form.siteId || !form.farmId || !form.soilType.trim() || !form.waterAvailability.trim() || !form.slopePercentage) {
@@ -139,7 +216,9 @@ export default function SiteEvaluationsPage() {
         notes: form.notes.trim() || undefined,
       })
       if (res.success && res.data) {
-        const { proposal } = res.data as { proposal?: { infrastructureType?: string; investmentValue?: number; roiMonths?: number } }
+        const { proposal } = res.data as {
+          proposal?: { infrastructureType?: string; investmentValue?: number; roiMonths?: number }
+        }
         const infra = proposal?.infrastructureType ?? "—"
         const inv = proposal?.investmentValue
         const roi = proposal?.roiMonths
@@ -160,54 +239,81 @@ export default function SiteEvaluationsPage() {
         setFormOpen(false)
         fetchEvaluations()
       }
-    } catch (err) {
+    } catch {
       toast({ title: "Failed to create evaluation", variant: "destructive" })
     } finally {
       setSubmitting(false)
     }
   }
 
-  const handleGenerateReport = async (proposalId: string) => {
+  const handleDownloadPdf = async (ev: EvalRow) => {
+    const sid = siteIdString(ev)
+    if (!sid) {
+      toast({ title: "Cannot download", description: "Site not linked to this evaluation.", variant: "destructive" })
+      return
+    }
+    if (!hasPermission(user, "canGenerateReports")) {
+      toast({ title: "No permission", variant: "destructive" })
+      return
+    }
+    setDownloadingId(ev._id)
     try {
-      const token = typeof window !== "undefined" ? localStorage.getItem("forge_token") : null
-      const res = await fetch(`${baseURL}/api/reports/proposal/${proposalId}`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          ...(token ? { Authorization: `Bearer ${token}` } : {}),
-        },
+      const res = await reportsApi.generate({
+        reportType: "site_evaluation",
+        format: "pdf",
+        siteIds: [sid],
       })
-      const json = await res.json()
-      if (json.success && json.data?.downloadUrl) {
-        const url = `${baseURL}${json.data.downloadUrl}`
-        window.open(url, "_blank")
-        toast({ title: "Report generated", description: "Download started." })
-      } else {
-        toast({ title: "Report failed", variant: "destructive" })
-      }
+      const downloadUrl = res?.data?.downloadUrl
+      const fileName = res?.data?.fileName
+      if (!downloadUrl || !fileName) throw new Error("Invalid response")
+      const apiUrl = process.env.NEXT_PUBLIC_API_URL || "http://localhost:5000"
+      const t = localStorage.getItem("forge_token")
+      const fileRes = await fetch(apiUrl + downloadUrl, {
+        headers: t ? { Authorization: `Bearer ${t}` } : {},
+      })
+      if (!fileRes.ok) throw new Error("Download failed")
+      const blob = await fileRes.blob()
+      const objectUrl = URL.createObjectURL(blob)
+      const a = document.createElement("a")
+      a.href = objectUrl
+      a.download = fileName
+      a.click()
+      URL.revokeObjectURL(objectUrl)
+      toast({ title: "Download started", description: "Site evaluation PDF" })
     } catch {
-      toast({ title: "Report failed", variant: "destructive" })
+      toast({ title: "Download failed", variant: "destructive" })
+    } finally {
+      setDownloadingId(null)
     }
   }
 
-  const siteName = (ev: SiteEvaluation & { siteId?: { name?: string; area?: number } }) =>
-    typeof ev.siteId === "object" && ev.siteId?.name
-      ? ev.siteId.name
-      : ev.name ?? "—"
-  const siteArea = (ev: SiteEvaluation & { siteId?: { area?: number } }) =>
-    typeof ev.siteId === "object" && ev.siteId?.area != null
-      ? ev.siteId.area
-      : ev.area ?? "—"
+  const handleDeleteConfirm = async () => {
+    if (!deleteTarget) return
+    setDeleteSubmitting(true)
+    try {
+      await siteEvaluationsApi.delete(deleteTarget._id)
+      toast({ title: "Evaluation deleted" })
+      setDeleteTarget(null)
+      fetchEvaluations()
+    } catch {
+      toast({ title: "Failed to delete", variant: "destructive" })
+    } finally {
+      setDeleteSubmitting(false)
+    }
+  }
+
+  const canNew = hasPermission(user, "canGenerateProposal")
+  const canDelete = canWriteModule(user, "evaluations")
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between">
+      <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
         <div>
           <h1 className="text-3xl font-bold tracking-tight">Site Evaluations</h1>
           <p className="text-muted-foreground">Infrastructure suitability and proposals</p>
         </div>
-        {hasPermission(user, "canGenerateProposal") && (
-          <Button className="bg-[#387F43] hover:bg-[#2d6535]" onClick={() => setFormOpen(true)}>
+        {canNew && (
+          <Button className="bg-[#387F43] hover:bg-[#2d6535] w-full sm:w-auto" onClick={() => setFormOpen(true)}>
             New Evaluation
           </Button>
         )}
@@ -233,7 +339,9 @@ export default function SiteEvaluationsPage() {
                   </SelectTrigger>
                   <SelectContent>
                     {farms.map((f) => (
-                      <SelectItem key={f._id} value={f._id}>{f.name}</SelectItem>
+                      <SelectItem key={f._id} value={f._id}>
+                        {f.name}
+                      </SelectItem>
                     ))}
                   </SelectContent>
                 </Select>
@@ -247,11 +355,15 @@ export default function SiteEvaluationsPage() {
                   disabled={!form.farmId || sitesLoading}
                 >
                   <SelectTrigger>
-                    <SelectValue placeholder={form.farmId && sitesLoading ? "Loading sites..." : "Select site"} />
+                    <SelectValue
+                      placeholder={form.farmId && sitesLoading ? "Loading sites..." : "Select site"}
+                    />
                   </SelectTrigger>
                   <SelectContent>
                     {sites.map((s) => (
-                      <SelectItem key={s._id} value={s._id}>{s.name} ({s.area} ac)</SelectItem>
+                      <SelectItem key={s._id} value={s._id}>
+                        {s.name} ({s.area} ac)
+                      </SelectItem>
                     ))}
                   </SelectContent>
                 </Select>
@@ -293,7 +405,9 @@ export default function SiteEvaluationsPage() {
                 <Label>Sun exposure</Label>
                 <Select
                   value={form.sunExposure}
-                  onValueChange={(v) => setForm((f) => ({ ...f, sunExposure: v as "full" | "partial" | "shade" }))}
+                  onValueChange={(v) =>
+                    setForm((f) => ({ ...f, sunExposure: v as "full" | "partial" | "shade" }))
+                  }
                 >
                   <SelectTrigger>
                     <SelectValue />
@@ -327,65 +441,195 @@ export default function SiteEvaluationsPage() {
         </DialogContent>
       </Dialog>
 
+      <AlertDialog open={!!deleteTarget} onOpenChange={(open) => !open && setDeleteTarget(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete evaluation?</AlertDialogTitle>
+            <AlertDialogDescription>
+              This will permanently remove the evaluation for{" "}
+              <span className="font-medium text-foreground">{deleteTarget ? siteDisplayName(deleteTarget) : ""}</span>.
+              This cannot be undone.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={deleteSubmitting}>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              className="bg-red-600 hover:bg-red-700"
+              disabled={deleteSubmitting}
+              onClick={(e) => {
+                e.preventDefault()
+                void handleDeleteConfirm()
+              }}
+            >
+              {deleteSubmitting ? "Deleting…" : "Delete"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
       <Card>
         <CardHeader>
           <CardTitle>Evaluations</CardTitle>
-          <CardDescription>{evaluations.length} evaluation(s)</CardDescription>
+          <CardDescription>
+            {loading
+              ? "Loading…"
+              : `${filteredEvaluations.length} shown${evaluations.length !== filteredEvaluations.length ? ` of ${evaluations.length}` : ""}`}
+          </CardDescription>
         </CardHeader>
-        <CardContent>
+        <CardContent className="space-y-4">
+          {!loading && evaluations.length > 0 && (
+            <div className="flex flex-col gap-3 lg:flex-row lg:flex-wrap lg:items-end">
+              <div className="grid gap-2 min-w-[140px] flex-1">
+                <Label className="text-xs text-muted-foreground">Status</Label>
+                <Select value={statusFilter} onValueChange={setStatusFilter}>
+                  <SelectTrigger>
+                    <SelectValue placeholder="All statuses" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">All statuses</SelectItem>
+                    <SelectItem value="draft">Draft</SelectItem>
+                    <SelectItem value="submitted">Submitted</SelectItem>
+                    <SelectItem value="approved">Approved</SelectItem>
+                    <SelectItem value="rejected">Rejected</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="grid gap-2 min-w-[160px] flex-1">
+                <Label className="text-xs text-muted-foreground">Farm</Label>
+                <Select value={farmFilter} onValueChange={setFarmFilter}>
+                  <SelectTrigger>
+                    <SelectValue placeholder="All farms" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">All farms</SelectItem>
+                    {farmFilterOptions.map(([id, name]) => (
+                      <SelectItem key={id} value={id}>
+                        {name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="grid gap-2 flex-[2] min-w-[200px]">
+                <Label className="text-xs text-muted-foreground">Search site</Label>
+                <Input
+                  placeholder="Filter by site name…"
+                  value={searchSite}
+                  onChange={(e) => setSearchSite(e.target.value)}
+                />
+              </div>
+            </div>
+          )}
+
           {loading ? (
             <p className="text-sm text-muted-foreground animate-pulse">Loading...</p>
           ) : evaluations.length === 0 ? (
-            <p className="text-sm text-muted-foreground">No site evaluations yet. Create one to get started.</p>
+            <div className="flex flex-col items-center justify-center py-14 px-4 text-center rounded-lg border border-dashed border-muted-foreground/20 bg-muted/20">
+              <p className="font-medium text-foreground">No evaluations yet</p>
+              <p className="text-sm text-muted-foreground mt-1 max-w-sm">
+                Create an evaluation to capture soil, water, and infrastructure fit for a site.
+              </p>
+              {canNew && (
+                <Button className="mt-6 bg-[#387F43] hover:bg-[#2d6535]" onClick={() => setFormOpen(true)}>
+                  New Evaluation
+                </Button>
+              )}
+            </div>
+          ) : filteredEvaluations.length === 0 ? (
+            <p className="text-sm text-muted-foreground py-8 text-center">
+              No evaluations match your filters.{" "}
+              <button
+                type="button"
+                className="text-[#387F43] underline underline-offset-2"
+                onClick={() => {
+                  setStatusFilter("all")
+                  setFarmFilter("all")
+                  setSearchSite("")
+                }}
+              >
+                Clear filters
+              </button>
+            </p>
           ) : (
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Site</TableHead>
-                  <TableHead>Farm</TableHead>
-                  <TableHead>Soil</TableHead>
-                  <TableHead>Water</TableHead>
-                  <TableHead>Slope %</TableHead>
-                  <TableHead>Status</TableHead>
-                  <TableHead>Created</TableHead>
-                  <TableHead></TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {evaluations.map((ev) => (
-                  <TableRow key={ev._id}>
-                    <TableCell>{siteName(ev)}</TableCell>
-                    <TableCell>{ev.farmId ?? "—"}</TableCell>
-                    <TableCell>{ev.soilType ?? "—"}</TableCell>
-                    <TableCell>{ev.waterAvailability ?? "—"}</TableCell>
-                    <TableCell>{ev.slopePercentage ?? "—"}</TableCell>
-                    <TableCell>
-                      <Badge className={statusBadge(ev.status)}>{ev.status}</Badge>
-                    </TableCell>
-                    <TableCell className="text-muted-foreground">
-                      {formatDistanceToNow(new Date(ev.createdAt), { addSuffix: true })}
-                    </TableCell>
-                    <TableCell className="space-x-2">
-                      <Button variant="outline" size="sm" asChild>
-                        <Link href={`/dashboard/site-evaluations/${ev._id}`}>View</Link>
-                      </Button>
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        disabled={!(ev as { proposalId?: string | null }).proposalId}
-                        title={!(ev as { proposalId?: string | null }).proposalId ? "No proposal yet" : undefined}
-                        onClick={() => (ev as { proposalId?: string }).proposalId && handleGenerateReport((ev as { proposalId: string }).proposalId)}
-                      >
-                        Generate Report
-                      </Button>
-                    </TableCell>
+            <div className="relative max-h-[min(60vh,560px)] overflow-auto rounded-md border">
+              <Table>
+                <TableHeader className="sticky top-0 z-10 bg-card shadow-[0_1px_0_0_hsl(var(--border))]">
+                  <TableRow className="hover:bg-transparent">
+                    <TableHead>Site</TableHead>
+                    <TableHead>Farm</TableHead>
+                    <TableHead>Soil</TableHead>
+                    <TableHead>Water</TableHead>
+                    <TableHead>Slope %</TableHead>
+                    <TableHead>Status</TableHead>
+                    <TableHead>Created</TableHead>
+                    <TableHead className="text-right w-[280px]">Actions</TableHead>
                   </TableRow>
-                ))}
-              </TableBody>
-            </Table>
+                </TableHeader>
+                <TableBody>
+                  {filteredEvaluations.map((ev) => (
+                    <TableRow
+                      key={ev._id}
+                      className="cursor-pointer hover:bg-muted/60"
+                      onClick={() => router.push(`/dashboard/site-evaluations/${ev._id}`)}
+                    >
+                      <TableCell className="font-medium">{siteDisplayName(ev)}</TableCell>
+                      <TableCell>{farmDisplayName(ev)}</TableCell>
+                      <TableCell>{ev.soilType ?? "—"}</TableCell>
+                      <TableCell>{ev.waterAvailability ?? "—"}</TableCell>
+                      <TableCell>{ev.slopePercentage ?? "—"}</TableCell>
+                      <TableCell onClick={(e) => e.stopPropagation()}>
+                        <Badge variant="outline" className={statusBadgeClass(ev.status)}>
+                          {ev.status}
+                        </Badge>
+                      </TableCell>
+                      <TableCell className="text-muted-foreground whitespace-nowrap">
+                        {formatDistanceToNow(new Date(ev.createdAt), { addSuffix: true })}
+                      </TableCell>
+                      <TableCell className="text-right" onClick={(e) => e.stopPropagation()}>
+                        <div className="flex flex-wrap justify-end gap-1.5">
+                          <Button variant="outline" size="sm" asChild>
+                            <Link href={`/dashboard/site-evaluations/${ev._id}`}>View</Link>
+                          </Button>
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            className="border-[#387F43] text-[#387F43] hover:bg-green-50"
+                            disabled={
+                              !siteIdString(ev) || !hasPermission(user, "canGenerateReports") || downloadingId === ev._id
+                            }
+                            title={!siteIdString(ev) ? "No site linked" : undefined}
+                            onClick={() => void handleDownloadPdf(ev)}
+                          >
+                            {downloadingId === ev._id ? "…" : "Download PDF"}
+                          </Button>
+                          {canDelete && (
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              className="text-red-600 border-red-200 hover:bg-red-50"
+                              onClick={() => setDeleteTarget(ev)}
+                            >
+                              Delete
+                            </Button>
+                          )}
+                        </div>
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </div>
           )}
         </CardContent>
       </Card>
     </div>
+  )
+}
+
+export default function SiteEvaluationsPage() {
+  return (
+    <DashboardPageGuard module="evaluations">
+      <SiteEvaluationsPageContent />
+    </DashboardPageGuard>
   )
 }

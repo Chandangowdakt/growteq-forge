@@ -15,18 +15,14 @@ import {
 } from "../utils/permissionUtils"
 import { logAudit } from "../utils/auditLogger"
 
-function normalizeIncomingRole(role: string | undefined): "admin" | "editor" | "viewer" {
+function storedRoleFromApproveBody(
+  role: string | undefined
+): "admin" | "field_evaluator" | "sales_associate" {
   const r = (role ?? "").toString().trim().toLowerCase()
-  if (r === "sales director") return "admin"
-  if (r === "field evaluator") return "editor"
-  if (r === "sales associate") return "viewer"
-  if (r === "field_evaluator") return "editor"
-  if (r === "sales_associate") return "viewer"
-  if (r === "user") return "viewer"
-  if (r === "admin") return "admin"
-  if (r === "editor") return "editor"
-  if (r === "viewer") return "viewer"
-  return "viewer"
+  if (r === "admin" || r === "sales director") return "admin"
+  if (r === "field_evaluator" || r === "field evaluator" || r === "editor") return "field_evaluator"
+  if (r === "sales_associate" || r === "sales associate" || r === "viewer" || r === "user") return "sales_associate"
+  return "sales_associate"
 }
 
 function buildUserPermissions(role: string, bodyPermissions: unknown): UserPermissions {
@@ -74,7 +70,7 @@ export const approveUserRequest = asyncHandler(async (req: AuthenticatedRequest,
     role?: string
     permissions?: unknown
   }
-  const newRole = normalizeIncomingRole(role)
+  const newRole = storedRoleFromApproveBody(role)
 
   const requestDoc = await UserRequest.findById(id).select("+password")
   if (!requestDoc) throw new ApiError(404, "Request not found")

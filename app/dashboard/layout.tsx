@@ -16,6 +16,7 @@ import {
   FileText,
   BarChart3,
   Lightbulb,
+  ClipboardList,
 } from "lucide-react"
 
 import { Button } from "@/components/ui/button"
@@ -80,6 +81,7 @@ export default function DashboardLayoutWrapper({
     { name: "Dashboard", href: "/dashboard/dashboard", icon: BarChart3 },
     { name: "Farms", href: "/dashboard/farms", icon: Tractor },
     { name: "Crops", href: "/dashboard/crops", icon: Sprout },
+    { name: "Evaluations", href: "/dashboard/site-evaluations", icon: ClipboardList },
     { name: "Finance", href: "/dashboard/finance", icon: DollarSign },
     { name: "Reports", href: "/dashboard/reports", icon: FileText },
     { name: "Insights", href: "/dashboard/insights", icon: Lightbulb },
@@ -89,12 +91,14 @@ export default function DashboardLayoutWrapper({
     if (item.href === "/dashboard/settings") return canReadModule(authUser, "settings")
     if (item.href === "/dashboard/finance") return canReadModule(authUser, "finance")
     if (item.href === "/dashboard/reports") return canReadModule(authUser, "reports")
+    if (item.href === "/dashboard/site-evaluations") return canReadModule(authUser, "evaluations")
     if (item.href === "/dashboard/farms" || item.href === "/dashboard/crops") {
       return canReadModule(authUser, "farms")
     }
     if (item.href === "/dashboard/dashboard" || item.href === "/dashboard/insights") {
       return canReadModule(authUser, "farms")
     }
+    if (item.href === "/dashboard/overview") return canReadModule(authUser, "farms")
     return true
   })
 
@@ -135,7 +139,7 @@ export default function DashboardLayoutWrapper({
               <img
                 src="/images/growteq-logo.svg"
                 alt="growteq"
-                className="h-10 w-auto"
+                className="h-10 w-auto object-contain brightness-0 invert"
               />
             </div>
 
@@ -146,7 +150,9 @@ export default function DashboardLayoutWrapper({
               )}
             >
               {filteredNavigation.map((item) => {
-                const isActive = pathname === item.href
+                const isActive =
+                  pathname === item.href ||
+                  (item.href !== "/dashboard/overview" && pathname.startsWith(`${item.href}/`))
                 return (
                   <Link
                     key={item.name}

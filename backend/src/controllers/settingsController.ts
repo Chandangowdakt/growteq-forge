@@ -53,22 +53,15 @@ export const listTeam = asyncHandler(async (req: AuthenticatedRequest, res: Resp
   res.json({ success: true, data })
 })
 
-function normalizeIncomingRole(role: string | undefined): "admin" | "editor" | "viewer" {
+/** Persisted role values aligned with frontend team dropdown (User schema enum). */
+function normalizeTeamMemberStoredRole(
+  role: string | undefined
+): "admin" | "field_evaluator" | "sales_associate" {
   const r = (role ?? "").toString().trim().toLowerCase()
-  // UI labels
-  if (r === "sales director") return "admin"
-  if (r === "field evaluator") return "editor"
-  if (r === "sales associate") return "viewer"
-  // Legacy API roles
-  if (r === "field_evaluator") return "editor"
-  if (r === "sales_associate") return "viewer"
-  if (r === "user") return "viewer"
-  // Canonical roles
-  if (r === "admin") return "admin"
-  if (r === "editor") return "editor"
-  if (r === "viewer") return "viewer"
-  // Default safe role
-  return "viewer"
+  if (r === "admin" || r === "sales director") return "admin"
+  if (r === "field_evaluator" || r === "field evaluator" || r === "editor") return "field_evaluator"
+  if (r === "sales_associate" || r === "sales associate" || r === "viewer" || r === "user") return "sales_associate"
+  return "sales_associate"
 }
 
 export const addTeamMember = asyncHandler(async (req: AuthenticatedRequest, res: Response) => {
@@ -82,7 +75,7 @@ export const addTeamMember = asyncHandler(async (req: AuthenticatedRequest, res:
     throw new ApiError(400, "User with this email already exists")
   }
 
-  const newRole = normalizeIncomingRole(role)
+  const newRole = normalizeTeamMemberStoredRole(role)
   const user = await User.create({
     name: name.trim(),
     email: normalizedEmail,
@@ -118,10 +111,10 @@ export const updateTeamMember = asyncHandler(async (req: AuthenticatedRequest, r
   const update: Record<string, unknown> = {}
 
   if (role !== undefined) {
-    const newRole = normalizeIncomingRole(role)
-    const prevRole = normalizeRole(existing.role)
+    const newRole = normalizeTeamMemberStoredRole(role)
+    const prevCanonical = normalizeRole(existing.role)
     update.role = newRole
-    if (newRole !== prevRole && bodyPermissions === undefined) {
+    if (normalizeRole(newRole) !== prevCanonical && bodyPermissions === undefined) {
       update.permissions = getDefaultPermissions(newRole)
     }
   }

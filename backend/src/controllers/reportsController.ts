@@ -1,5 +1,6 @@
 import fs from "fs"
 import path from "path"
+import mongoose from "mongoose"
 import { Response } from "express"
 import { jsPDF } from "jspdf"
 import { asyncHandler } from "../utils/asyncHandler"
@@ -20,82 +21,117 @@ const REPORT_TYPES = [
   "site_comparison",
   "executive_summary",
 ] as const
- 
-async function getMapboxImage(geojson: any): Promise<string | null> {
-  console.log("=== getMapboxImage called ===")
-  console.log("MAPBOX_TOKEN set:", !!process.env.MAPBOX_TOKEN)
-  console.log(
-    "MAPBOX_TOKEN value preview:",
-    process.env.MAPBOX_TOKEN?.substring(0, 15) + "..."
-  )
-  console.log("geojson received:", !!geojson)
-  console.log("coords length:", geojson?.coordinates?.[0]?.length)
 
-  const token = process.env.MAPBOX_TOKEN
+function getReportsDir(): string {
+  return path.resolve(path.join(__dirname, "..", "..", "public", "reports"))
+}
+
+/**
+ * Single-segment basename only, no path traversal; must end with an allowed extension.
+ */
+function resolveSafeReportFile(
+  rawParam: string | undefined,
+  allowedLowerExtensions: readonly string[]
+): { absPath: string; baseName: string } {
+  if (!rawParam || typeof rawParam !== "string") {
+    throw new ApiError(400, "fileName is required")
+  }
+  let decoded: string
+  try {
+    decoded = decodeURIComponent(rawParam)
+  } catch {
+    decoded = rawParam
+  }
+  if (decoded.includes("\0")) {
+    throw new ApiError(400, "Invalid file name")
+  }
+  if (decoded.includes("/") || decoded.includes("\\") || decoded.includes("..")) {
+    throw new ApiError(400, "Invalid file name")
+  }
+  const baseName = path.basename(decoded)
+  if (baseName !== decoded) {
+    throw new ApiError(400, "Invalid file name")
+  }
+  const low = baseName.toLowerCase()
+  if (!allowedLowerExtensions.some((ext) => low.endsWith(`.${ext}`))) {
+    throw new ApiError(400, "Invalid file type")
+  }
+  if (!/^[a-zA-Z0-9._-]+$/.test(baseName)) {
+    throw new ApiError(400, "Invalid file name")
+  }
+  const absDir = getReportsDir()
+  const absPath = path.resolve(absDir, baseName)
+  const dirWithSep = absDir.endsWith(path.sep) ? absDir : `${absDir}${path.sep}`
+  if (absPath !== absDir && !absPath.startsWith(dirWithSep)) {
+    throw new ApiError(400, "Invalid path")
+  }
+  return { absPath, baseName }
+}
+ 
+function fetchMapboxStaticOnce(url: string): Promise<Buffer | null> {
+  return new Promise<Buffer | null>((resolve) => {
+    const https = require("https")
+    const req = https.get(url, { timeout: 15000 }, (res: any) => {
+      if (res.statusCode !== 200) {
+        console.warn("Mapbox static API returned status:", res.statusCode)
+        resolve(null)
+        return
+      }
+      const chunks: Buffer[] = []
+      res.on("data", (c: Buffer) => chunks.push(c))
+      res.on("end", () => resolve(Buffer.concat(chunks)))
+      res.on("error", () => resolve(null))
+    })
+    req.on("error", (e: Error) => {
+      console.warn("Mapbox request error:", e.message)
+      resolve(null)
+    })
+    req.on("timeout", () => {
+      req.destroy()
+      resolve(null)
+    })
+  })
+}
+
+async function getMapboxImage(geojson: any): Promise<string | null> {
+  const token = process.env.MAPBOX_TOKEN?.trim()
   if (!token) {
-    console.log("No MAPBOX_TOKEN set")
+    console.warn("[getMapboxImage] MAPBOX_TOKEN is not set — skipping satellite snapshot")
     return null
   }
   try {
     const coords = geojson?.coordinates?.[0]
     if (!coords || coords.length < 3) return null
- 
+
     const lats = coords.map((c: number[]) => c[1])
     const lngs = coords.map((c: number[]) => c[0])
     const centerLat = (Math.min(...lats) + Math.max(...lats)) / 2
     const centerLng = (Math.min(...lngs) + Math.max(...lngs)) / 2
- 
+
     const overlay = encodeURIComponent(
       JSON.stringify({
         type: "Feature",
         properties: {
-          stroke: "#16a34a",
+          stroke: "#ec4899",
           "stroke-width": 3,
-          fill: "#22c55e",
+          fill: "#ec4899",
           "fill-opacity": 0.25,
         },
         geometry: geojson,
       })
     )
- 
-    const url = `https://api.mapbox.com/styles/v1/mapbox/satellite-streets-v12/static/geojson(${overlay})/${centerLng},${centerLat},16,0/600x350?access_token=${token}`
 
-    console.log("Mapbox URL length:", url.length)
-    console.log("Mapbox URL preview:", url.substring(0, 100))
+    const url = `https://api.mapbox.com/styles/v1/mapbox/satellite-streets-v12/static/geojson(${overlay})/${centerLng},${centerLat},16,0/800x500?access_token=${token}`
 
-    console.log("Fetching Mapbox satellite image...")
- 
-    const buffer = await new Promise<Buffer | null>((resolve) => {
-      const https = require("https")
-      const req = https.get(url, { timeout: 10000 }, (res: any) => {
-        if (res.statusCode !== 200) {
-          console.log("Mapbox returned status:", res.statusCode)
-          resolve(null)
-          return
-        }
-        const chunks: Buffer[] = []
-        res.on("data", (c: Buffer) => chunks.push(c))
-        res.on("end", () => resolve(Buffer.concat(chunks)))
-        res.on("error", () => resolve(null))
-      })
-      req.on("error", (e: any) => {
-        console.log("Mapbox request error:", e.message)
-        resolve(null)
-      })
-      req.on("timeout", () => {
-        req.destroy()
-        resolve(null)
-      })
-    })
-
-    console.log("Buffer received:", !!buffer)
-    console.log("Buffer size:", buffer?.length)
-
+    let buffer = await fetchMapboxStaticOnce(url)
+    if (!buffer) {
+      console.warn("[getMapboxImage] First Mapbox fetch failed, retrying once…")
+      buffer = await fetchMapboxStaticOnce(url)
+    }
     if (!buffer) return null
-    console.log("✓ Mapbox satellite image fetched, size:", buffer.length)
     return buffer.toString("base64")
   } catch (e: any) {
-    console.error("getMapboxImage error:", e.message)
+    console.error("getMapboxImage error:", e?.message ?? e)
     return null
   }
 }
@@ -139,7 +175,6 @@ function createPDF(
         const logoDataUrl = `data:image/png;base64,${logoBase64}`
         doc.addImage(logoDataUrl, "PNG", 8, 3, 42, 20)
         logoLoaded = true
-        console.log("✓ Logo loaded from:", logoPath)
         break
       } catch (e: any) {
         console.error("Logo load failed at", logoPath, ":", e.message)
@@ -191,10 +226,6 @@ function createPDF(
   for (const section of sections) {
     // ── Site Map section ──────────────────────────────────────────
     if (section.heading === "Site Map") {
-      console.log("=== Site Map section hit ===")
-      console.log("section.mapImage exists:", !!section.mapImage)
-      console.log("section.mapImage length:", section.mapImage?.length)
-
       if (y > 220) {
         doc.addPage()
         y = 20
@@ -217,7 +248,6 @@ function createPDF(
         try {
           const imgData = `data:image/png;base64,${section.mapImage}`
           doc.addImage(imgData, "PNG", 10, y, pageW - 20, 70)
-          console.log("✓ Satellite map embedded in PDF")
           y += 74
         } catch (e: any) {
           console.error("Map embed error:", e.message)
@@ -424,6 +454,40 @@ export const listReports = asyncHandler(async (_req: AuthenticatedRequest, res: 
  
   res.json({ success: true, data })
 })
+
+/** Flat file list for Report History UI: fileName, inferred report type, mtime. */
+export const listReportFiles = asyncHandler(async (_req: AuthenticatedRequest, res: Response) => {
+  const reportsDir = path.join(__dirname, "..", "..", "public", "reports")
+  if (!fs.existsSync(reportsDir)) {
+    return res.json({ success: true, data: [] })
+  }
+  const names = fs
+    .readdirSync(reportsDir)
+    .filter((f) => {
+      const low = f.toLowerCase()
+      return low.endsWith(".pdf") || low.endsWith(".csv")
+    })
+  const data = names
+    .map((fileName) => {
+      const filePath = path.join(reportsDir, fileName)
+      let stat: fs.Stats
+      try {
+        stat = fs.statSync(filePath)
+      } catch {
+        return null
+      }
+      const inferred = reportTypeFromFileName(fileName)
+      return {
+        fileName,
+        type: inferred ?? "unknown",
+        createdAt: stat.mtime.toISOString(),
+      }
+    })
+    .filter((row): row is NonNullable<typeof row> => row != null)
+    .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
+
+  res.json({ success: true, data })
+})
  
 export const listReportTypes = asyncHandler(async (_req: AuthenticatedRequest, res: Response) => {
   try {
@@ -490,20 +554,14 @@ export const listReportTypes = asyncHandler(async (_req: AuthenticatedRequest, r
  
 export const downloadReport = asyncHandler(async (req: AuthenticatedRequest, res: Response) => {
   const { fileName } = req.params as { fileName?: string }
- 
-  if (!fileName) {
-    throw new ApiError(400, "fileName is required")
-  }
- 
-  const reportsDir = path.join(__dirname, "..", "..", "public", "reports")
-  const filePath = path.join(reportsDir, fileName)
- 
-  if (!fs.existsSync(filePath)) {
+  const { absPath, baseName } = resolveSafeReportFile(fileName, ["pdf", "csv"])
+
+  if (!fs.existsSync(absPath)) {
     throw new ApiError(404, "Report not found")
   }
- 
-  res.setHeader("Content-Disposition", `attachment; filename="${fileName}"`)
-  res.sendFile(path.resolve(filePath))
+
+  res.setHeader("Content-Disposition", `attachment; filename="${baseName}"`)
+  res.sendFile(absPath)
 })
  
 export const generateProposalReport = asyncHandler(
@@ -602,21 +660,15 @@ export const generateProposalReport = asyncHandler(
  
 export const deleteReport = asyncHandler(async (req: AuthenticatedRequest, res: Response) => {
   const { fileName } = req.params as { fileName?: string }
- 
-  if (!fileName) {
-    throw new ApiError(400, "fileName is required")
-  }
- 
-  const reportsDir = path.join(__dirname, "..", "..", "public", "reports")
-  const filePath = path.join(reportsDir, fileName)
- 
-  if (!fs.existsSync(filePath)) {
+  const { absPath } = resolveSafeReportFile(fileName, ["pdf"])
+
+  if (!fs.existsSync(absPath)) {
     throw new ApiError(404, "Report not found")
   }
- 
-  fs.unlinkSync(filePath)
- 
-  res.json({ success: true })
+
+  fs.unlinkSync(absPath)
+
+  res.json({ success: true, message: "Deleted successfully" })
 })
  
 export const generateFarmReport = asyncHandler(
@@ -775,24 +827,40 @@ export const generateReport = asyncHandler(
         const reportId = `RPT-${timestamp}`
  
         if (reportType === "site_evaluation") {
-          // Get the most recently created SiteEvaluation for this user
           const userFarms = (await Farm.find({ userId }).lean()) as any[]
           const farmIds = userFarms.map((f) => f._id.toString())
+          const farmObjectIds = farmIds.map((id) => new mongoose.Types.ObjectId(id))
           const farmMap = new Map(userFarms.map((f) => [f._id.toString(), f]))
 
-          // Find the LATEST evaluation only
-          const latestEval = (await SiteEvaluation.findOne({
-            siteId: {
-              $in: await Site.find({ farmId: { $in: farmIds } }).distinct("_id"),
-            },
-          })
-            .sort({ createdAt: -1 })
-            .lean()) as any
+          const requestedSiteId =
+            siteIds?.length && mongoose.Types.ObjectId.isValid(String(siteIds[0]))
+              ? new mongoose.Types.ObjectId(String(siteIds[0]))
+              : null
+
+          let latestEval: any
+          if (requestedSiteId) {
+            latestEval = await SiteEvaluation.findOne({
+              siteId: requestedSiteId,
+              farmId: { $in: farmObjectIds },
+            })
+              .sort({ createdAt: -1 })
+              .lean()
+          } else {
+            latestEval = await SiteEvaluation.findOne({
+              siteId: {
+                $in: await Site.find({ farmId: { $in: farmIds } }).distinct("_id"),
+              },
+            })
+              .sort({ createdAt: -1 })
+              .lean()
+          }
 
           if (!latestEval) {
             return res.status(404).json({
               success: false,
-              error: "No site evaluations found. Please evaluate a site first.",
+              error: requestedSiteId
+                ? "No site evaluation found for this site. Complete an evaluation first."
+                : "No site evaluations found. Please evaluate a site first.",
             })
           }
 
@@ -975,19 +1043,7 @@ export const generateReport = asyncHandler(
             })
           }
 
-          // ONE map for this ONE site
-          console.log("=== Calling getMapboxImage for site:", site.name)
-          console.log("Site geojson type:", site.geojson?.type)
-          console.log(
-            "Site geojson coords count:",
-            site.geojson?.coordinates?.[0]?.length
-          )
-
           const mapBase64 = site.geojson ? await getMapboxImage(site.geojson) : null
-          console.log(
-            "mapBase64 result:",
-            mapBase64 ? `string length ${mapBase64.length}` : "NULL"
-          )
 
           allSections.push({
             heading: "Site Map",
@@ -1165,7 +1221,6 @@ export const generateReport = asyncHandler(
         fs.writeFileSync(filePath, pdfBuffer)
 
         const duration = Date.now() - startTime
-        console.log(`PDF generated in ${duration}ms for reportType: ${reportType}`)
         if (duration > 10000) {
           console.warn(`⚠️ Slow PDF generation: ${duration}ms`)
         }
@@ -1176,7 +1231,6 @@ export const generateReport = asyncHandler(
         try {
           const stats = fs.statSync(filePath)
           const fileSizeKB = Math.round(stats.size / 1024)
-          console.log(`PDF file size: ${fileSizeKB}KB`)
           if (fileSizeKB < 5) {
             console.warn("⚠️ PDF file size suspiciously small — may be empty")
           }

@@ -15,8 +15,10 @@ import {
   ResponsiveContainer,
 } from "recharts"
 import { Badge } from "@/components/ui/badge"
-import { TrendingUp, Target, AlertCircle } from "lucide-react"
+import { TrendingUp, Target, AlertCircle, BarChart3 } from "lucide-react"
+import { Skeleton } from "@/components/ui/skeleton"
 import { insightsApi } from "@/lib/api"
+import { DashboardPageGuard } from "@/components/dashboard/dashboard-page-guard"
 
 const defaultByMonth = [
   { month: "Jan", approved: 1, drafted: 4, submitted: 2 },
@@ -31,7 +33,7 @@ const defaultRoiProjection = [
   { month: 12, polyhouse: 35, shade_net: 40, open_field: 50 },
 ]
 
-export default function InsightsPage() {
+function InsightsPageContent() {
   const [pipeline, setPipeline] = useState<{ byMonth?: { month: string; approved: number; drafted: number; submitted: number }[] } | null>(null)
   const [siteRankingData, setSiteRankingData] = useState<{ siteName?: string; score?: number; roiMonths?: number | null; infrastructureType?: string | null }[]>([])
   const [roiDistribution, setRoiDistribution] = useState<{ month: number; polyhouse: number; shade_net: number; open_field: number }[]>([])
@@ -128,6 +130,12 @@ export default function InsightsPage() {
 
   const pipelineValueCr = pipelineValue ? `₹${(pipelineValue / 10_000_000).toFixed(2)} Cr` : "₹0.00 Cr"
 
+  const hasBackendPipeline = !!(pipeline?.byMonth && pipeline.byMonth.length > 0)
+  const hasBackendRoi = roiDistribution.length > 0
+  const hasBackendRanking = siteRankingData.length > 0
+  const noRealInsights =
+    !loading && !error && !hasBackendPipeline && !hasBackendRoi && !hasBackendRanking
+
   return (
     <div className="space-y-6">
       <div>
@@ -147,9 +155,44 @@ export default function InsightsPage() {
       )}
 
       {loading && (
-        <div className="p-8 animate-pulse text-muted-foreground">Loading…</div>
+        <div className="space-y-6">
+          <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
+            {[1, 2, 3, 4].map((i) => (
+              <Card key={i} className="border-l-4">
+                <CardHeader className="pb-2">
+                  <Skeleton className="h-4 w-28" />
+                </CardHeader>
+                <CardContent className="space-y-2">
+                  <Skeleton className="h-8 w-16" />
+                  <Skeleton className="h-3 w-24" />
+                </CardContent>
+              </Card>
+            ))}
+          </div>
+          <div className="grid gap-6 lg:grid-cols-2">
+            <Card>
+              <CardHeader>
+                <Skeleton className="h-5 w-48" />
+                <Skeleton className="h-4 w-64 mt-2" />
+              </CardHeader>
+              <CardContent>
+                <Skeleton className="h-[300px] w-full" />
+              </CardContent>
+            </Card>
+            <Card>
+              <CardHeader>
+                <Skeleton className="h-5 w-48" />
+                <Skeleton className="h-4 w-56 mt-2" />
+              </CardHeader>
+              <CardContent>
+                <Skeleton className="h-[300px] w-full" />
+              </CardContent>
+            </Card>
+          </div>
+        </div>
       )}
 
+      {!loading && (
       <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
         <Card className="border-l-4 border-l-[#387F43]">
           <CardHeader className="pb-2">
@@ -194,7 +237,18 @@ export default function InsightsPage() {
           </CardContent>
         </Card>
       </div>
+      )}
 
+      {noRealInsights ? (
+        <div className="flex flex-col items-center justify-center py-16 px-4 text-center rounded-xl border border-dashed border-muted-foreground/20 bg-muted/20">
+          <BarChart3 className="h-12 w-12 text-muted-foreground/45 mb-3" />
+          <p className="font-medium text-foreground">No data available</p>
+          <p className="text-sm text-muted-foreground mt-1 max-w-md">
+            Insights will appear here once you have evaluations, proposals, and pipeline activity in the system.
+          </p>
+        </div>
+      ) : !loading ? (
+      <>
       <div className="grid gap-6 lg:grid-cols-2">
         <Card>
           <CardHeader>
@@ -319,6 +373,16 @@ export default function InsightsPage() {
           </div>
         </CardContent>
       </Card>
+      </>
+      ) : null}
     </div>
+  )
+}
+
+export default function InsightsPage() {
+  return (
+    <DashboardPageGuard module="farms">
+      <InsightsPageContent />
+    </DashboardPageGuard>
   )
 }

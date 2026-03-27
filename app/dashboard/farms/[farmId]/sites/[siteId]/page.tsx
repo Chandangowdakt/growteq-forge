@@ -10,6 +10,8 @@ import dynamic from "next/dynamic"
 import { toast } from "@/hooks/use-toast"
 import { hasPermission } from "@/lib/permissions"
 import { useAuth } from "@/app/context/auth-context"
+import { reportsApi } from "@/lib/api"
+import { Download } from "lucide-react"
 import type { LeafletMapProps } from "@/app/dashboard/farms/LeafletMap"
 
 type BoundaryPoint = { lat: number; lng: number; id: string }
@@ -54,6 +56,7 @@ export default function SiteDetailPage() {
   const [editName, setEditName] = useState("")
   const [editNotes, setEditNotes] = useState("")
   const [boundary, setBoundary] = useState<BoundaryPoint[]>([])
+  const [downloadingPdf, setDownloadingPdf] = useState(false)
   const statusBadgeVariant = useMemo(() => {
     const status = site?.status ?? "draft"
     switch (status) {
@@ -72,11 +75,8 @@ export default function SiteDetailPage() {
     if (!siteId) return
     setLoading(true)
     try {
-      console.log("Loading site:", siteId)
       const token = typeof window !== "undefined" ? localStorage.getItem("forge_token") : null
       const apiUrl = process.env.NEXT_PUBLIC_API_URL || "http://localhost:5000"
-      console.log("API URL:", apiUrl)
-      console.log("Token exists:", !!token)
 
       const response = await fetch(`${apiUrl}/api/sites/${siteId}`, {
         headers: {
@@ -125,9 +125,6 @@ export default function SiteDetailPage() {
     }
   }, [siteId])
 
-  useEffect(() => {
-    load()
-  }, [load])
   const mapCenter =
     boundary.length > 0
       ? {
@@ -225,6 +222,46 @@ export default function SiteDetailPage() {
     router.push(`/dashboard/site-evaluations/new?siteId=${encodedSiteId}&farmId=${encodedFarmId}`)
   }
 
+  const handleDownloadEvaluationPdf = async () => {
+    if (!siteId) return
+    setDownloadingPdf(true)
+    try {
+      const res = await reportsApi.generate({
+        reportType: "site_evaluation",
+        format: "pdf",
+        siteIds: [siteId],
+      })
+      const downloadUrl = res?.data?.downloadUrl
+      const fileName = res?.data?.fileName
+      if (!downloadUrl || !fileName) throw new Error("Invalid response")
+      const apiUrl = process.env.NEXT_PUBLIC_API_URL || "http://localhost:5000"
+      const token = typeof window !== "undefined" ? localStorage.getItem("forge_token") : null
+      const fileRes = await fetch(apiUrl + downloadUrl, {
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+      })
+      if (!fileRes.ok) throw new Error("Download failed")
+      const blob = await fileRes.blob()
+      const objectUrl = URL.createObjectURL(blob)
+      const a = document.createElement("a")
+      a.href = objectUrl
+      a.download = fileName
+      document.body.appendChild(a)
+      a.click()
+      a.remove()
+      URL.revokeObjectURL(objectUrl)
+      toast({ title: "Download started", description: "Site evaluation PDF" })
+    } catch (e) {
+      console.error(e)
+      toast({
+        title: "PDF download failed",
+        description: "Try generating from the Reports page.",
+        variant: "destructive",
+      })
+    } finally {
+      setDownloadingPdf(false)
+    }
+  }
+
   if (!farmId || !siteId) {
     return (
       <div className="p-6">
@@ -257,8 +294,32 @@ export default function SiteDetailPage() {
                 {site.slope != null ? `• Slope: ${site.slope}%` : ""}
               </p>
             </div>
-            <div className="flex items-center gap-3">
+            <div className="flex flex-wrap items-center gap-3">
               <Badge className={statusBadgeVariant}>{site.status ?? "draft"}</Badge>
+              {(site.status === "submitted" || site.status === "approved") &&
+                hasPermission(user, "canGenerateReports") && (
+                  <Button
+                    size="sm"
+                    className="bg-[#387F43] hover:bg-[#2d6535] text-white"
+                    onClick={handleDownloadEvaluationPdf}
+                    disabled={downloadingPdf}
+                  >
+                    {downloadingPdf ? (
+                      <span className="flex items-center gap-2">
+                        <svg className="animate-spin h-4 w-4" viewBox="0 0 24 24">
+                          <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" />
+                          <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8z" />
+                        </svg>
+                        Generating…
+                      </span>
+                    ) : (
+                      <span className="flex items-center gap-2">
+                        <Download className="h-4 w-4" />
+                        Download evaluation PDF
+                      </span>
+                    )}
+                  </Button>
+                )}
               {hasPermission(user, "canCreateSite") && (
                 <Button variant="outline" size="sm" onClick={handleStartEvaluation}>
                   Start Evaluation

@@ -30,8 +30,9 @@ export const listSiteEvaluations = asyncHandler(async (req: AuthenticatedRequest
   if (farmId) filter.farmId = farmId
   if (status) filter.status = status
   const evaluations = await SiteEvaluation.find(filter)
+    .populate("farmId", "name")
     .populate("siteId", "name area")
-    .sort({ updatedAt: -1 })
+    .sort({ createdAt: -1 })
     .lean()
   const evalIds = evaluations.map((e) => e._id)
   const proposalFilter: Record<string, unknown> = { siteEvaluationId: { $in: evalIds } }

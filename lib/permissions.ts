@@ -131,6 +131,15 @@ export function canWriteModule(
   return !!resolvePermissions(user)[module]?.write
 }
 
+/** Explicit read/write check per module (admin always allowed). */
+export function hasModulePermission(
+  user: Pick<AuthUser, "role" | "permissions"> | null | undefined,
+  module: PermissionModule,
+  action: "read" | "write"
+): boolean {
+  return action === "read" ? canReadModule(user, module) : canWriteModule(user, module)
+}
+
 const LEGACY_MAP = {
   canCreateFarm: { module: "farms" as const, action: "write" as const },
   canDeleteFarm: { module: "farms" as const, action: "write" as const },

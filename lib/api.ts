@@ -13,6 +13,7 @@ export const api = axios.create({
   baseURL,
   headers: { "Content-Type": "application/json" },
   withCredentials: true,
+  timeout: 20000,
 })
 
 api.interceptors.request.use((config) => {
@@ -27,12 +28,16 @@ api.interceptors.response.use(
   (res) => res,
   (err: AxiosError<{ error?: string }>) => {
     if (!err.response) {
-      // Network error - backend unreachable
-      console.error("Network error - backend unreachable")
-      // Don't redirect, let components handle it
+      if (typeof window !== "undefined") {
+        window.dispatchEvent(new CustomEvent("forge-network-error"))
+      }
+      console.warn("Network error — backend unreachable")
       return Promise.reject(new Error("Network error. Please check your connection."))
     }
-    if (err.response?.status === 401 && typeof window !== "undefined") {
+    const reqUrl = err.config?.url ?? ""
+    const isAuthLogin =
+      err.config?.method?.toLowerCase() === "post" && reqUrl.includes("/api/auth/login")
+    if (err.response?.status === 401 && typeof window !== "undefined" && !isAuthLogin) {
       localStorage.removeItem("forge_token")
       localStorage.removeItem("forge_user")
       window.location.href = "/login"
@@ -177,7 +182,7 @@ export interface InfrastructureSnapshot {
 export interface SiteEvaluation {
   _id: string
   siteId?: string | { _id: string; name?: string; area?: number }
-  farmId?: string
+  farmId?: string | { _id: string; name?: string }
   userId: string
   soilType?: string
   waterAvailability?: string
@@ -400,11 +405,25 @@ export interface GenerateReportResponse {
   downloadUrl: string
 }
 
+export interface ReportFileRow {
+  fileName: string
+  type: string
+  createdAt: string
+}
+
 export const reportsApi = {
   list: () =>
     request<{ success: boolean; data: ReportTypeItem[] }>("GET", "/api/reports/list"),
+  listFiles: () =>
+    request<{ success: boolean; data: ReportFileRow[] }>("GET", "/api/reports/files"),
   generate: (body: { reportType: string; siteIds?: string[]; format: "pdf" | "excel" }) =>
     request<{ success: boolean; data: GenerateReportResponse }>("POST", "/api/reports/generate", body),
+  /** PDF only; server rejects other extensions. */
+  remove: (fileName: string) =>
+    request<{ success: boolean; message?: string }>(
+      "DELETE",
+      `/api/reports/${encodeURIComponent(fileName)}`
+    ),
 }
 
 // Settings team

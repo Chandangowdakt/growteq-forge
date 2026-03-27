@@ -46,3 +46,4 @@ yarn-error.log*
 
 # Generated runtime artifacts (reports, uploads)
 backend/public/reports/*.pdf
+backend/public/reports/*.csv

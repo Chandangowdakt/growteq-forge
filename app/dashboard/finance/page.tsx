@@ -19,6 +19,8 @@ import {
 import { TrendingUp, Calculator } from "lucide-react"
 import { financeApi, type FinanceSummary } from "@/lib/api"
 import { formatINR } from "@/lib/utils"
+import { DashboardPageGuard } from "@/components/dashboard/dashboard-page-guard"
+import { Skeleton } from "@/components/ui/skeleton"
 
 const CR = 10_000_000
 
@@ -104,7 +106,19 @@ function FinanceContent() {
       )}
 
       {loading ? (
-        <div className="p-8 animate-pulse text-muted-foreground">Loading…</div>
+        <div className="space-y-6">
+          <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
+            {[1, 2, 3, 4].map((i) => (
+              <Card key={i}>
+                <CardHeader className="pb-2 space-y-2">
+                  <Skeleton className="h-3 w-36" />
+                  <Skeleton className="h-8 w-28" />
+                </CardHeader>
+              </Card>
+            ))}
+          </div>
+          <Skeleton className="h-[350px] w-full rounded-xl" />
+        </div>
       ) : (
         <>
           <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
@@ -273,8 +287,27 @@ function FinanceContent() {
 
 export default function FinancePage() {
   return (
-    <Suspense fallback={<div className="p-6">Loading…</div>}>
-      <FinanceContent />
-    </Suspense>
+    <DashboardPageGuard module="finance">
+      <Suspense
+        fallback={
+          <div className="space-y-6 p-6">
+            <Skeleton className="h-9 w-40" />
+            <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
+              {[1, 2, 3, 4].map((i) => (
+                <Card key={i}>
+                  <CardHeader className="pb-2 space-y-2">
+                    <Skeleton className="h-3 w-32" />
+                    <Skeleton className="h-8 w-24" />
+                  </CardHeader>
+                </Card>
+              ))}
+            </div>
+            <Skeleton className="h-64 w-full rounded-xl" />
+          </div>
+        }
+      >
+        <FinanceContent />
+      </Suspense>
+    </DashboardPageGuard>
   )
 }

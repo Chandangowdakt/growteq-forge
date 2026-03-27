@@ -1,6 +1,6 @@
 "use client"
 import { useState, useEffect, useRef, FormEvent } from "react"
-import { MapContainer, TileLayer, Marker, Polygon, ScaleControl, ZoomControl, useMapEvents, useMap } from "react-leaflet"
+import { MapContainer, TileLayer, ScaleControl, ZoomControl, useMapEvents, useMap } from "react-leaflet"
 import type { LatLngExpression } from "leaflet"
 import L from "leaflet"
 import { polygon, area as turfArea, lineString, length as turfLength } from "@turf/turf"
@@ -15,6 +15,21 @@ L.Icon.Default.mergeOptions({
 
 const DEFAULT_CENTER: LatLngExpression = [12.9716, 77.5946]
 const DEFAULT_ZOOM = 15
+
+/** Satellite-friendly boundary styling */
+const BOUNDARY_RED_ICON = new L.Icon({
+  iconUrl: "https://maps.google.com/mapfiles/ms/icons/red-dot.png",
+  iconSize: [32, 32],
+  iconAnchor: [16, 32],
+})
+
+const PINK_POLYGON_STYLE: L.PathOptions = {
+  color: "#ec4899",
+  weight: 3,
+  opacity: 1,
+  fillColor: "#ec4899",
+  fillOpacity: 0.25,
+}
 
 interface BoundaryPoint {
   lat: number
@@ -68,34 +83,76 @@ function MapResizer({ isFullscreen }: { isFullscreen: boolean }) {
   return null
 }
 
-function FitToBounds({ points }: { points: BoundaryPoint[] }) {
+/** Imperative boundary layers — avoids react-leaflet Marker/Polygon sync issues (_leaflet_pos, duplicate layers). */
+function BoundaryLayers({ points }: { points: BoundaryPoint[] }) {
   const map = useMap()
-  useEffect(() => {
-    if (points.length < 3) return
-    const bounds = L.latLngBounds(points.map((p) => [p.lat, p.lng]))
-    map.fitBounds(bounds, { padding: [24, 24] })
-  }, [points, map])
-  return null
-}
+  const polygonRef = useRef<L.Polygon | null>(null)
+  const markersRef = useRef<L.Marker[]>([])
 
-function FitBounds({ points }: { points: { lat: number; lng: number }[] }) {
-  const map = useMap()
+  const coordsSig = points.map((p) => `${p.lat},${p.lng}`).join(";")
 
   useEffect(() => {
-    if (points && points.length >= 2) {
+    if (!map) return
+
+    const clearBoundaryLayers = () => {
+      if (polygonRef.current) {
+        try {
+          if (map.hasLayer(polygonRef.current)) map.removeLayer(polygonRef.current)
+        } catch {
+          /* stale layer */
+        }
+        polygonRef.current = null
+      }
+      markersRef.current.forEach((m) => {
+        try {
+          if (map.hasLayer(m)) map.removeLayer(m)
+        } catch {
+          /* ignore */
+        }
+      })
+      markersRef.current = []
+    }
+
+    clearBoundaryLayers()
+
+    points.forEach((p) => {
+      const marker = L.marker([p.lat, p.lng], { icon: BOUNDARY_RED_ICON }).addTo(map)
+      markersRef.current.push(marker)
+    })
+
+    if (points.length >= 3) {
+      const latlngs = points.map((p) => [p.lat, p.lng] as L.LatLngTuple)
+      const poly = L.polygon(latlngs, PINK_POLYGON_STYLE).addTo(map)
+      poly.on("mouseover", () => poly.setStyle({ weight: 4 }))
+      poly.on("mouseout", () => poly.setStyle(PINK_POLYGON_STYLE))
+      polygonRef.current = poly
+      try {
+        map.fitBounds(poly.getBounds(), { padding: [24, 24], maxZoom: 19, animate: false })
+      } catch {
+        /* invalid bounds */
+      }
+    } else if (points.length >= 2) {
       const lats = points.map((p) => p.lat)
       const lngs = points.map((p) => p.lng)
       const bounds: L.LatLngBoundsExpression = [
         [Math.min(...lats), Math.min(...lngs)],
         [Math.max(...lats), Math.max(...lngs)],
       ]
-      map.fitBounds(bounds, {
-        padding: [40, 40],
-        animate: false,
-        maxZoom: 19,
-      })
+      try {
+        map.fitBounds(bounds, { padding: [40, 40], maxZoom: 19, animate: false })
+      } catch {
+        /* ignore */
+      }
     }
-  }, [points.length])
+
+    return () => {
+      try {
+        clearBoundaryLayers()
+      } catch {
+        /* map may be tearing down */
+      }
+    }
+  }, [map, coordsSig])
 
   return null
 }
@@ -143,12 +200,16 @@ export default function LeafletMap({
   }, [initialCenter])
 
   useEffect(() => {
-    // Only locate user for new site creation (no saved boundary / not read-only)
+    if (readOnly) {
+      setLocating(false)
+      return
+    }
+    // Only locate user for new site creation (no saved boundary)
     if (!navigator.geolocation) {
       setLocating(false)
       return
     }
-    if (readOnly || (initialBoundary && initialBoundary.length > 0)) {
+    if (initialBoundary && initialBoundary.length > 0) {
       setLocating(false)
       return
     }
@@ -161,9 +222,11 @@ export default function LeafletMap({
       () => setLocating(false),
       { timeout: 8000 }
     )
-  }, [initialBoundary?.length])
+  }, [readOnly, initialBoundary?.length])
 
-  useEffect(() => { setBoundaryPoints(boundary) }, [boundary])
+  useEffect(() => {
+    setBoundaryPoints(boundary)
+  }, [boundary])
 
   useEffect(() => {
     if (!isFullscreen) return
@@ -189,9 +252,9 @@ export default function LeafletMap({
     }
   }, [])
 
-  // Reset drawing and walking state when mode changes
+  // Reset drawing and walking state when mode changes (never clear saved boundary in read-only)
   useEffect(() => {
-    // Stop any active watch
+    if (readOnly) return
     if (watchIdRef.current != null) {
       navigator.geolocation.clearWatch(watchIdRef.current)
       watchIdRef.current = null
@@ -203,7 +266,7 @@ export default function LeafletMap({
     }
     setBoundaryPoints([])
     onBoundaryChangeRef.current?.([], 0)
-  }, [mapMode])
+  }, [mapMode, readOnly])
 
   // Debounced Nominatim search
   useEffect(() => {
@@ -271,6 +334,7 @@ export default function LeafletMap({
   }
 
   const handleSelect = (lat: number, lng: number) => {
+    if (readOnly) return
     if (mapMode !== "draw") return
     const now = Date.now()
     if (lastClickRef.current && now - lastClickRef.current < 300) return
@@ -328,36 +392,18 @@ export default function LeafletMap({
     if (!walkLayerRef.current) return
     const latLngs = points.map((p) => [p.lat, p.lng]) as [number, number][]
     L.polyline(latLngs, {
-      color: "#3b82f6",
-      weight: 2,
+      color: "#ec4899",
+      weight: 3,
       dashArray: "6 4",
+      opacity: 0.9,
     }).addTo(walkLayerRef.current)
     for (const p of points) {
-      L.circleMarker([p.lat, p.lng], {
-        radius: 4,
-        color: "#3b82f6",
-        weight: 2,
-        fillColor: "#3b82f6",
-        fillOpacity: 0.9,
-      }).addTo(walkLayerRef.current)
+      L.marker([p.lat, p.lng], { icon: BOUNDARY_RED_ICON }).addTo(walkLayerRef.current)
     }
   }
 
-  const renderWalkPolygon = (closed: { lat: number; lng: number }[]) => {
-    if (!mapRef.current || closed.length < 3) return
-    ensureWalkLayer()
-    if (!walkLayerRef.current) return
-    const latLngs = closed.map((p) => [p.lat, p.lng]) as [number, number][]
-    L.polygon(latLngs, {
-      color: "#16a34a",
-      weight: 2,
-      opacity: 1,
-      fillColor: "#22c55e",
-      fillOpacity: 0.2,
-    }).addTo(walkLayerRef.current)
-  }
-
   const startWalk = () => {
+    if (readOnly) return
     if (walkState === "walking") return
     if (!navigator.geolocation) {
       alert("GPS not available")
@@ -396,13 +442,14 @@ export default function LeafletMap({
 
   const finishWalk = () => {
     pauseWalk()
+    if (readOnly) return
     if (walkPoints.length < 3) {
       alert("Need at least 3 points to calculate area.")
       return
     }
-    const closed = [...walkPoints, walkPoints[0]]
-    renderWalkPolygon(closed)
-    // Update drawing state so Save Site works with walked polygon
+    if (walkLayerRef.current) {
+      walkLayerRef.current.clearLayers()
+    }
     const boundaryFromWalk: BoundaryPoint[] = walkPoints.map((p, idx) => ({
       lat: p.lat,
       lng: p.lng,
@@ -413,30 +460,6 @@ export default function LeafletMap({
     onBoundaryChangeRef.current?.(boundaryFromWalk, area)
     setWalkState("finished")
   }
-
-  const firstPointIcon = L.divIcon({
-    html: `<svg width="24" height="36" viewBox="0 0 24 36" xmlns="http://www.w3.org/2000/svg">
-             <path d="M12 0C5.4 0 0 5.4 0 12c0 9 12 24 12 24s12-15 12-24C24 5.4 18.6 0 12 0z" 
-                   fill="#ef4444" stroke="white" stroke-width="1"/>
-             <circle cx="12" cy="12" r="4" fill="white"/>
-           </svg>`,
-    iconSize: [24, 36] as L.PointExpression,
-    iconAnchor: [12, 36] as L.PointExpression,
-    popupAnchor: [0, -36] as L.PointExpression,
-    className: "",
-  })
-
-  const otherPointIcon = L.divIcon({
-    html: `<svg width="14" height="14" viewBox="0 0 14 14" xmlns="http://www.w3.org/2000/svg">
-             <circle cx="7" cy="7" r="5" 
-                     fill="#3b82f6" 
-                     stroke="white" 
-                     stroke-width="2"/>
-           </svg>`,
-    iconSize: [14, 14] as L.PointExpression,
-    iconAnchor: [7, 7] as L.PointExpression,
-    className: "",
-  })
 
   return (
     <div className={isFullscreen ? "fixed inset-0 z-[9999] bg-black transition-all duration-200" : "relative h-full w-full"}>
@@ -453,6 +476,7 @@ export default function LeafletMap({
       )}
 
       <MapContainer
+        ref={mapRef}
         center={DEFAULT_CENTER}
         zoom={DEFAULT_ZOOM}
         maxZoom={22}
@@ -482,36 +506,14 @@ export default function LeafletMap({
           )
         })()}
 
-        <ClickHandler onSelect={handleSelect} />
+        {!readOnly && <ClickHandler onSelect={handleSelect} />}
         <LocationFlyTo coords={currentLocation} />
         <SearchFlyTo target={searchTarget} />
         <MapResizer isFullscreen={isFullscreen} />
-        <FitToBounds points={boundaryPoints} />
-        <FitBounds points={boundaryPoints} />
         <FlyToCenter center={initialCenter ?? null} />
+        <BoundaryLayers points={boundaryPoints} />
         <ScaleControl position="bottomleft" />
         <ZoomControl position="bottomleft" />
-
-        {boundaryPoints.map((point, index) => (
-          <Marker
-            key={point.id}
-            position={[point.lat, point.lng]}
-            icon={firstPointIcon}
-          />
-        ))}
-
-        {boundaryPoints.length >= 3 && (
-          <Polygon
-            positions={boundary}
-            pathOptions={{
-              color: "#16a34a",
-              weight: 2,
-              opacity: 1,
-              fillColor: "#22c55e",
-              fillOpacity: 0.2,
-            }}
-          />
-        )}
       </MapContainer>
 
       {isFullscreen && (
@@ -521,7 +523,7 @@ export default function LeafletMap({
         </button>
       )}
 
-      {isFullscreen && (
+      {isFullscreen && !readOnly && (
         <div
           style={{
             position: "absolute",

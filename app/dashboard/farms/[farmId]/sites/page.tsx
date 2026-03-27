@@ -6,6 +6,7 @@ import { useParams } from "next/navigation"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { farmsApi } from "@/lib/api"
+import { Sprout } from "lucide-react"
 
 interface SiteItem {
   _id: string
@@ -72,7 +73,13 @@ export default function FarmSitesPage() {
           {loading ? (
             <p className="text-sm text-muted-foreground">Loading...</p>
           ) : sites.length === 0 ? (
-            <p className="text-sm text-muted-foreground">No sites yet. Create sites from the map on the Farms page.</p>
+            <div className="flex flex-col items-center justify-center py-12 px-4 text-center rounded-xl border border-dashed border-muted-foreground/20 bg-muted/20">
+              <Sprout className="h-11 w-11 text-muted-foreground/45 mb-3" />
+              <p className="text-sm font-medium text-foreground">No sites in this farm</p>
+              <p className="text-xs text-muted-foreground mt-1 max-w-sm">
+                Create sites from the map on the Farms page.
+              </p>
+            </div>
           ) : (
             <ul className="space-y-2">
               {sites.map((site) => (

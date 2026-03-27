@@ -157,8 +157,12 @@ async function start() {
   startServer(PORT)
   console.log("=== Environment Check ===")
   console.log("NODE_ENV:", process.env.NODE_ENV)
-  console.log("MAPBOX_TOKEN set:", !!process.env.MAPBOX_TOKEN)
-  console.log("MAPBOX_TOKEN preview:", process.env.MAPBOX_TOKEN?.substring(0, 15))
+  const mapbox = process.env.MAPBOX_TOKEN?.trim()
+  if (!mapbox) {
+    console.warn("[Server] MAPBOX_TOKEN is missing or empty — PDF site maps will use a placeholder.")
+  } else {
+    console.log("[Server] MAPBOX_TOKEN is set (length", mapbox.length + ", preview", mapbox.slice(0, 8) + "…).")
+  }
   console.log("FRONTEND_URL:", process.env.FRONTEND_URL)
   console.log("PORT:", process.env.PORT)
 }

@@ -5,10 +5,14 @@ import Link from "next/link"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from "recharts"
-import { TrendingUp, MapPin, CheckCircle, Clock, AlertCircle } from "lucide-react"
-import { dashboardApi } from "@/lib/api"
+import { AlertCircle, ClipboardList } from "lucide-react"
+import { dashboardApi, userRequestsApi } from "@/lib/api"
+import { isAdminRole } from "@/lib/permissions"
+import { Skeleton } from "@/components/ui/skeleton"
 import { formatINR } from "@/lib/utils"
 import { formatDistanceToNow } from "date-fns"
+import { DashboardPageGuard } from "@/components/dashboard/dashboard-page-guard"
+import { useAuth } from "@/app/context/auth-context"
 
 interface SummaryData {
   totalSites: number
@@ -19,10 +23,12 @@ interface SummaryData {
   revenueTrend: { month: string; value: number }[]
 }
 
-export default function OverviewPage() {
+function OverviewPageContent() {
+  const { user } = useAuth()
   const [data, setData] = useState<SummaryData | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  const [pendingApprovals, setPendingApprovals] = useState<number | null>(null)
 
   const fetchSummary = useCallback(async () => {
     setLoading(true)
@@ -60,10 +66,43 @@ export default function OverviewPage() {
     fetchSummary()
   }, [fetchSummary])
 
+  useEffect(() => {
+    if (!isAdminRole(user?.role)) {
+      setPendingApprovals(null)
+      return
+    }
+    userRequestsApi
+      .listPending()
+      .then((res) => {
+        const n = Array.isArray(res?.data) ? res.data.length : 0
+        setPendingApprovals(n)
+      })
+      .catch(() => setPendingApprovals(0))
+  }, [user?.role])
+
   if (loading) {
     return (
-      <div className="max-w-7xl mx-auto px-6 py-8">
-        <p>Loading dashboard...</p>
+      <div className="max-w-7xl mx-auto px-6 py-8 space-y-8">
+        <Skeleton className="h-9 w-48" />
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+          {Array.from({ length: 6 }).map((_, i) => (
+            <Card key={i} className="rounded-2xl shadow-sm">
+              <CardHeader className="p-6 space-y-2">
+                <Skeleton className="h-3 w-24" />
+                <Skeleton className="h-8 w-20" />
+              </CardHeader>
+            </Card>
+          ))}
+        </div>
+        <Card className="rounded-2xl shadow-sm">
+          <CardHeader>
+            <Skeleton className="h-6 w-40" />
+            <Skeleton className="h-4 w-64 mt-2" />
+          </CardHeader>
+          <CardContent className="p-6">
+            <Skeleton className="h-80 w-full" />
+          </CardContent>
+        </Card>
       </div>
     )
   }
@@ -105,6 +144,20 @@ export default function OverviewPage() {
       <h1 className="text-3xl font-bold mb-2">Overview</h1>
 
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+        {isAdminRole(user?.role) && pendingApprovals != null && (
+          <Card className="rounded-2xl shadow-sm border-l-4 border-l-amber-500">
+            <CardHeader className="p-6">
+              <CardDescription className="text-xs uppercase tracking-wide text-muted-foreground flex items-center gap-1">
+                <ClipboardList className="h-3.5 w-3.5" />
+                Pending approvals
+              </CardDescription>
+              <CardTitle className="text-2xl font-semibold">{pendingApprovals}</CardTitle>
+              <Button variant="link" className="h-auto p-0 text-[#387F43]" asChild>
+                <Link href="/dashboard/settings">Review in Settings →</Link>
+              </Button>
+            </CardHeader>
+          </Card>
+        )}
         <Card className="rounded-2xl shadow-sm">
           <CardHeader className="p-6">
             <CardDescription className="text-xs uppercase tracking-wide text-muted-foreground">
@@ -204,5 +257,13 @@ export default function OverviewPage() {
         </CardContent>
       </Card>
     </div>
+  )
+}
+
+export default function OverviewPage() {
+  return (
+    <DashboardPageGuard module="farms">
+      <OverviewPageContent />
+    </DashboardPageGuard>
   )
 }

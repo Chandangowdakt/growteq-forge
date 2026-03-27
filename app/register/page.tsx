@@ -44,7 +44,7 @@ export default function RegisterPage() {
   }
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-gray-50 p-4">
+    <div className="min-h-screen bg-[#ede8dc] flex flex-col items-center justify-center p-4">
       <div className="w-full max-w-md">
         <div className="flex justify-center mb-8">
           <img
@@ -124,12 +124,14 @@ export default function RegisterPage() {
               />
             </div>
             {error && (
-              <p className="text-sm text-red-600">{error}</p>
+              <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-md text-sm">
+                {error}
+              </div>
             )}
             <Button
               type="submit"
               disabled={isLoading || requestSent}
-              className="w-full h-11 text-base font-medium"
+              className="w-full h-11 text-base font-medium disabled:opacity-70 disabled:cursor-not-allowed"
               style={{ backgroundColor: BRAND_GREEN }}
             >
               {isLoading ? (
@@ -154,6 +156,9 @@ export default function RegisterPage() {
           </p>
         </div>
       </div>
+      <p className="mt-8 text-sm text-gray-500 text-center">
+        © 2026 Growteq Agri Farms Pvt Ltd. All rights reserved.
+      </p>
     </div>
   )
 }

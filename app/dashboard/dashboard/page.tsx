@@ -6,6 +6,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Button } from "@/components/ui/button"
 import { MapPin, Zap, FileText } from "lucide-react"
 import { dashboardApi, type WorkInProgressItem } from "@/lib/api"
+import { DashboardPageGuard } from "@/components/dashboard/dashboard-page-guard"
 
 function timeAgo(date: string): string {
   const d = new Date(date)
@@ -24,7 +25,7 @@ const infrastructureOptions = [
   { type: "Open Field", suitability: "High", icon: "🌾", description: "Traditional cultivation" },
 ]
 
-export default function DashboardPage() {
+function DashboardWorkContent() {
   const [work, setWork] = useState<WorkInProgressItem[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -200,5 +201,13 @@ export default function DashboardPage() {
         </div>
       </div>
     </div>
+  )
+}
+
+export default function DashboardPage() {
+  return (
+    <DashboardPageGuard module="farms">
+      <DashboardWorkContent />
+    </DashboardPageGuard>
   )
 }
