@@ -119,6 +119,21 @@ function ReportsPageContent() {
     }
   }
 
+  const handleDelete = async (fileName: string) => {
+    if (!confirm("Are you sure you want to delete this report?")) return
+    setDeleting(fileName)
+    try {
+      await reportsApi.remove(fileName)
+      toast({ title: "Report deleted" })
+      loadFileHistory()
+      loadList()
+    } catch {
+      toast({ title: "Delete failed", variant: "destructive" })
+    } finally {
+      setDeleting(null)
+    }
+  }
+
   const handleDownloadExisting = async (fileName: string, key: string) => {
     setError(null)
     setDownloading(key)
