@@ -4,10 +4,8 @@ import { useState, useEffect, useRef } from "react"
 import Link from "next/link"
 import { usePathname } from "next/navigation"
 import {
-  Bell,
   LogOut,
   Menu,
-  X,
   Settings,
   LayoutDashboard,
   Tractor,
@@ -26,8 +24,8 @@ import { CompanyProvider } from "@/app/context/company-context"
 import { useAuth } from "@/app/context/auth-context"
 import { UserProfile } from "@/components/navigation/user-profile"
 import { WelcomeModal } from "@/components/welcome-modal"
-import { SafeImage } from "@/components/ui/safe-image"
 import { NotificationsDrawer } from "@/components/notifications/notifications-drawer"
+import { GrowteqLogo } from "@/components/brand/growteq-logo"
 import { ProtectedLayout } from "@/app/dashboard/ProtectedLayout"
 import { canReadModule } from "@/lib/permissions"
 export default function DashboardLayoutWrapper({
@@ -133,14 +131,18 @@ export default function DashboardLayoutWrapper({
             <div
               className={cn(
                 "flex flex-col items-start mb-5",
-                isExpanded ? "px-4" : "px-2"
+                isExpanded ? "px-4" : "px-2 items-center w-full"
               )}
             >
-              <img
-                src="/images/growteq-logo.svg"
-                alt="growteq"
-                className="h-10 w-auto object-contain brightness-0 invert"
-              />
+              {isExpanded ? (
+                <GrowteqLogo variant="sidebar" href="/dashboard/overview" className="h-10" />
+              ) : (
+                <GrowteqLogo
+                  variant="collapsed"
+                  href="/dashboard/overview"
+                  className="h-9 w-9 object-contain mx-auto"
+                />
+              )}
             </div>
 
             <div
@@ -193,17 +195,23 @@ export default function DashboardLayoutWrapper({
 
         {/* Main */}
         <div className="flex flex-col flex-1 overflow-hidden">
-          <div className="sticky top-0 z-10 flex items-center justify-between h-16 px-6 bg-white border-b">
-            <Button
-              variant="ghost"
-              size="icon"
-              className="md:hidden"
-              onClick={() => setIsMobileNavOpen(true)}
-            >
-              <Menu className="h-6 w-6" />
-            </Button>
+          <div className="sticky top-0 z-10 flex items-center justify-between gap-3 h-16 px-4 sm:px-6 bg-white border-b">
+            <div className="flex items-center gap-2 min-w-0 md:min-w-0 md:flex-initial">
+              <Button
+                variant="ghost"
+                size="icon"
+                className="md:hidden shrink-0"
+                onClick={() => setIsMobileNavOpen(true)}
+                aria-label="Open menu"
+              >
+                <Menu className="h-6 w-6" />
+              </Button>
+              <div className="md:hidden min-w-0 flex-1">
+                <GrowteqLogo variant="default" href="/dashboard/overview" className="h-8 max-h-8" />
+              </div>
+            </div>
 
-            <div className="flex items-center ml-auto space-x-4">
+            <div className="flex items-center ml-auto space-x-4 shrink-0">
               <UserProfile
                 name={
                   authUser
@@ -220,6 +228,58 @@ export default function DashboardLayoutWrapper({
             {children}
           </main>
         </div>
+
+        <Sheet open={isMobileNavOpen} onOpenChange={setIsMobileNavOpen}>
+          <SheetContent
+            side="left"
+            className="w-[min(100vw-2rem,18rem)] border-0 bg-[#387F43] p-0 text-white [&>button]:text-white [&>button]:hover:bg-white/15 [&>button]:hover:text-white"
+          >
+            <div className="flex h-full flex-col pt-2">
+              <div className="border-b border-white/15 px-4 pb-4 pr-12">
+                <GrowteqLogo
+                  variant="sidebar"
+                  href="/dashboard/overview"
+                  className="h-9"
+                  onNavigate={() => setIsMobileNavOpen(false)}
+                />
+              </div>
+              <nav className="flex flex-1 flex-col gap-1 overflow-y-auto px-3 py-4">
+                {filteredNavigation.map((item) => {
+                  const isActive =
+                    pathname === item.href ||
+                    (item.href !== "/dashboard/overview" && pathname.startsWith(`${item.href}/`))
+                  return (
+                    <Link
+                      key={item.name}
+                      href={item.href}
+                      onClick={() => setIsMobileNavOpen(false)}
+                      className={cn(
+                        "flex items-center gap-3 rounded-md px-3 py-3 text-sm font-medium",
+                        isActive ? "bg-[#2d6535] text-white" : "text-white hover:bg-[#2d6535]"
+                      )}
+                    >
+                      <item.icon className="h-5 w-5 shrink-0" />
+                      {item.name}
+                    </Link>
+                  )
+                })}
+              </nav>
+              <div className="border-t border-white/15 p-3">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setIsMobileNavOpen(false)
+                    logout()
+                  }}
+                  className="flex w-full items-center gap-3 rounded-md px-3 py-3 text-sm font-medium text-white hover:bg-[#2d6535]"
+                >
+                  <LogOut className="h-5 w-5 shrink-0" />
+                  Sign Out
+                </button>
+              </div>
+            </div>
+          </SheetContent>
+        </Sheet>
       </div>
       </CompanyProvider>
     </ProtectedLayout>

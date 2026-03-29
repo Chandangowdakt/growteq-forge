@@ -10,7 +10,7 @@ import dynamic from "next/dynamic"
 import { toast } from "@/hooks/use-toast"
 import { hasPermission } from "@/lib/permissions"
 import { useAuth } from "@/app/context/auth-context"
-import { reportsApi } from "@/lib/api"
+import { farmsApi, reportsApi } from "@/lib/api"
 import { Download } from "lucide-react"
 import type { LeafletMapProps } from "@/app/dashboard/farms/LeafletMap"
 
@@ -57,6 +57,7 @@ export default function SiteDetailPage() {
   const [editNotes, setEditNotes] = useState("")
   const [boundary, setBoundary] = useState<BoundaryPoint[]>([])
   const [downloadingPdf, setDownloadingPdf] = useState(false)
+  const [farmName, setFarmName] = useState<string | null>(null)
   const statusBadgeVariant = useMemo(() => {
     const status = site?.status ?? "draft"
     switch (status) {
@@ -138,6 +139,26 @@ export default function SiteDetailPage() {
     setLoading(true)
     load()
   }, [siteId])
+
+  useEffect(() => {
+    if (!farmId) {
+      setFarmName(null)
+      return
+    }
+    let cancelled = false
+    farmsApi
+      .get(farmId)
+      .then((res) => {
+        if (cancelled) return
+        setFarmName(res?.data?.name?.trim() || null)
+      })
+      .catch(() => {
+        if (!cancelled) setFarmName(null)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [farmId])
 
   useEffect(() => {
     if (typeof window === "undefined") return
@@ -287,6 +308,24 @@ export default function SiteDetailPage() {
         <>
           <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
             <div>
+              <nav aria-label="Breadcrumb" className="mb-1.5 text-xs text-muted-foreground">
+                <ol className="flex flex-wrap items-center gap-x-1.5 gap-y-0.5">
+                  <li>
+                    <Link
+                      href={`/dashboard/farms/${farmId}/sites`}
+                      className="hover:text-foreground underline-offset-2 hover:underline transition-colors"
+                    >
+                      {farmName ?? "Farm"}
+                    </Link>
+                  </li>
+                  <li aria-hidden className="text-muted-foreground/60 select-none">
+                    /
+                  </li>
+                  <li className="text-foreground/80 font-medium truncate max-w-[min(100%,16rem)] sm:max-w-md" title={site.name}>
+                    {site.name}
+                  </li>
+                </ol>
+              </nav>
               <h1 className="text-3xl font-bold tracking-tight">{site.name}</h1>
               <p className="text-muted-foreground">
                 Area: {site.area} acres{" "}
@@ -320,11 +359,6 @@ export default function SiteDetailPage() {
                     )}
                   </Button>
                 )}
-              {hasPermission(user, "canCreateSite") && (
-                <Button variant="outline" size="sm" onClick={handleStartEvaluation}>
-                  Start Evaluation
-                </Button>
-              )}
               <Button
                 variant="outline"
                 size="sm"
@@ -353,7 +387,7 @@ export default function SiteDetailPage() {
                 <CardTitle>Boundary</CardTitle>
                 <CardDescription>Existing field boundary (read-only)</CardDescription>
               </CardHeader>
-              <CardContent className="space-y-4">
+              <CardContent className="space-y-0">
                 {boundary.length === 0 ? (
                   <p className="text-sm text-muted-foreground">
                     No boundary data available for this site.
@@ -370,6 +404,17 @@ export default function SiteDetailPage() {
                       isFullscreen={false}
                       onExitFullscreen={() => {}}
                     />
+                  </div>
+                )}
+                {hasPermission(user, "canCreateSite") && (
+                  <div className="mt-5 flex w-full flex-col gap-2 sm:items-end">
+                    <Button
+                      type="button"
+                      className="w-full bg-[#387F43] hover:bg-[#2d6535] text-white sm:w-auto sm:min-w-[11rem]"
+                      onClick={handleStartEvaluation}
+                    >
+                      Start Evaluation
+                    </Button>
                   </div>
                 )}
               </CardContent>

@@ -141,31 +141,34 @@ async function getMapboxImage(geojson: any): Promise<string | null> {
 
 const GST_PERCENT = 0.18
 const DEFAULT_CONTINGENCY_PERCENT = 0.05
-const FARM_EVAL_RGB_TABLE_HEADER: [number, number, number] = [232, 236, 240]
+const FARM_EVAL_RGB_TABLE_HEADER: [number, number, number] = [243, 244, 246]
 const FARM_EVAL_RGB_TABLE_ZEBRA: [number, number, number] = [248, 250, 252]
-const FARM_EVAL_RGB_DIVIDER: [number, number, number] = [200, 204, 200]
-const FARM_EVAL_RGB_TEXT_PRIMARY: [number, number, number] = [30, 30, 30]
-const FARM_EVAL_RGB_TEXT_BODY: [number, number, number] = [50, 50, 50]
-const FARM_EVAL_RGB_TEXT_MUTED: [number, number, number] = [100, 100, 100]
-const FARM_EVAL_RGB_TEXT_LABEL: [number, number, number] = [100, 100, 100]
-const FARM_EVAL_RGB_HEADER_META: [number, number, number] = [150, 150, 150]
+const FARM_EVAL_RGB_DIVIDER: [number, number, number] = [229, 231, 235]
+const FARM_EVAL_RGB_TEXT_PRIMARY: [number, number, number] = [31, 41, 55]
+const FARM_EVAL_RGB_TEXT_BODY: [number, number, number] = [31, 41, 55]
+const FARM_EVAL_RGB_TEXT_MUTED: [number, number, number] = [107, 114, 128]
+const FARM_EVAL_RGB_TEXT_LABEL: [number, number, number] = [107, 114, 128]
+const FARM_EVAL_RGB_HEADER_META: [number, number, number] = [107, 114, 128]
 const FARM_EVAL_RGB_WATERMARK: [number, number, number] = [244, 246, 244]
 const FARM_EVAL_RGB_PLACEHOLDER_BG: [number, number, number] = [240, 240, 240]
 const FARM_EVAL_RGB_PLACEHOLDER_TEXT: [number, number, number] = [120, 120, 120]
-const FARM_EVAL_FONT_SECTION = 12
-const FARM_EVAL_FONT_BODY = 9
-const FARM_EVAL_FONT_CAPTION = 8
+const FARM_EVAL_FONT_SECTION = 10.5
+const FARM_EVAL_FONT_BODY = 10
+const FARM_EVAL_FONT_CAPTION = 8.5
 const FARM_EVAL_FONT_HEADER_BAR_TITLE = 14
 const FARM_EVAL_FONT_WATERMARK = 36
-const FARM_EVAL_GAP_SECTION = 6
-const FARM_EVAL_GAP_LINE = 4
+const FARM_EVAL_GAP_SECTION = 7
+const FARM_EVAL_GAP_LINE = 4.25
 const FARM_EVAL_MARGIN_X = 14
 const FARM_EVAL_Y_MAX_CONTENT = 266
 const FARM_EVAL_ROW_PAIR_MM = 11
 const FARM_EVAL_SECTION_TITLE_RULE_MM = 8
 
 const FARM_EVAL_WATERMARK_TEXT = "CONFIDENTIAL"
-const FARM_EVAL_FONT_CUSTOM = "FarmEvalDejaVu"
+const FARM_EVAL_FONT_DEJAVU = "FarmEvalDejaVu"
+const FARM_EVAL_FONT_INTER = "FarmEvalInter"
+/** ~50 CSS px height at 96dpi → mm */
+const FARM_EVAL_LOGO_MAX_HEIGHT_MM = (50 / 96) * 25.4
 const FARM_EVAL_MAP_MAX_BYTES_BEFORE_COMPRESS = 320_000
 const ESTIMATE_VALIDITY_DAYS = 30
 
@@ -199,13 +202,13 @@ function farmEvalRegisterDejaVu(doc: InstanceType<typeof jsPDF>): { ok: boolean;
   if (!normalPath || !boldPath) return { ok: false, hasItalic: false }
   try {
     doc.addFileToVFS("fe-dejavu-n.ttf", fs.readFileSync(normalPath).toString("binary"))
-    doc.addFont("fe-dejavu-n.ttf", FARM_EVAL_FONT_CUSTOM, "normal")
+    doc.addFont("fe-dejavu-n.ttf", FARM_EVAL_FONT_DEJAVU, "normal")
     doc.addFileToVFS("fe-dejavu-b.ttf", fs.readFileSync(boldPath).toString("binary"))
-    doc.addFont("fe-dejavu-b.ttf", FARM_EVAL_FONT_CUSTOM, "bold")
+    doc.addFont("fe-dejavu-b.ttf", FARM_EVAL_FONT_DEJAVU, "bold")
     let hasItalic = false
     if (obliquePath) {
       doc.addFileToVFS("fe-dejavu-i.ttf", fs.readFileSync(obliquePath).toString("binary"))
-      doc.addFont("fe-dejavu-i.ttf", FARM_EVAL_FONT_CUSTOM, "italic")
+      doc.addFont("fe-dejavu-i.ttf", FARM_EVAL_FONT_DEJAVU, "italic")
       hasItalic = true
     }
     return { ok: true, hasItalic }
@@ -215,7 +218,21 @@ function farmEvalRegisterDejaVu(doc: InstanceType<typeof jsPDF>): { ok: boolean;
   }
 }
 
-function tryAddGrowteqLogoPng(doc: InstanceType<typeof jsPDF>, x: number, y: number, w: number, h: number): boolean {
+function readPngIhdrDimensions(buf: Buffer): { w: number; h: number } | null {
+  if (buf.length < 24 || buf[0] !== 0x89) return null
+  if (buf.toString("ascii", 12, 16) !== "IHDR") return null
+  return { w: buf.readUInt32BE(16), h: buf.readUInt32BE(20) }
+}
+
+/**
+ * Draw logo at fixed height (object-fit: contain) — width follows intrinsic aspect ratio (no stretch).
+ */
+function tryAddGrowteqLogoPngFit(
+  doc: InstanceType<typeof jsPDF>,
+  x: number,
+  y: number,
+  maxHeightMm: number
+): { drawn: boolean; widthMm: number; heightMm: number } {
   const logoCandidates = [
     path.join(process.cwd(), "backend", "backend", "public", "images", "growteq-logo.png"),
     path.join(process.cwd(), "backend", "public", "images", "growteq-logo.png"),
@@ -224,17 +241,57 @@ function tryAddGrowteqLogoPng(doc: InstanceType<typeof jsPDF>, x: number, y: num
     path.join(__dirname, "..", "..", "..", "public", "images", "growteq-logo.png"),
   ]
   for (const logoPath of logoCandidates) {
-    if (fs.existsSync(logoPath)) {
-      try {
-        const logoBase64 = fs.readFileSync(logoPath).toString("base64")
-        doc.addImage(`data:image/png;base64,${logoBase64}`, "PNG", x, y, w, h)
-        return true
-      } catch {
-        /* continue */
-      }
+    if (!fs.existsSync(logoPath)) continue
+    try {
+      const fileBuf = fs.readFileSync(logoPath)
+      const dim = readPngIhdrDimensions(fileBuf)
+      const logoH = maxHeightMm
+      const logoW = dim && dim.h > 0 ? (maxHeightMm * dim.w) / dim.h : maxHeightMm * 2.1
+      const logoBase64 = fileBuf.toString("base64")
+      doc.addImage(`data:image/png;base64,${logoBase64}`, "PNG", x, y, logoW, logoH)
+      return { drawn: true, widthMm: logoW, heightMm: logoH }
+    } catch {
+      /* try next path */
     }
   }
-  return false
+  return { drawn: false, widthMm: 0, heightMm: 0 }
+}
+
+function resolveFarmEvalInterTtfPaths(): { roman: string | null; italic: string | null } {
+  const interRel = ["node_modules", "typeface-inter", "Inter Variable", "Single axis"]
+  const roots = [
+    path.join(process.cwd(), ...interRel),
+    path.join(process.cwd(), "backend", ...interRel),
+    path.join(__dirname, "..", "..", ...interRel),
+  ]
+  for (const root of roots) {
+    const roman = path.join(root, "Inter-roman.ttf")
+    const italic = path.join(root, "Inter-italic.ttf")
+    if (fs.existsSync(roman)) {
+      return { roman, italic: fs.existsSync(italic) ? italic : null }
+    }
+  }
+  return { roman: null, italic: null }
+}
+
+function farmEvalRegisterInter(doc: InstanceType<typeof jsPDF>): { ok: boolean; hasItalic: boolean } {
+  const { roman, italic } = resolveFarmEvalInterTtfPaths()
+  if (!roman) return { ok: false, hasItalic: false }
+  try {
+    doc.addFileToVFS("fe-inter-r.ttf", fs.readFileSync(roman).toString("binary"))
+    doc.addFont("fe-inter-r.ttf", FARM_EVAL_FONT_INTER, "normal")
+    doc.addFont("fe-inter-r.ttf", FARM_EVAL_FONT_INTER, "bold")
+    let hasItalic = false
+    if (italic) {
+      doc.addFileToVFS("fe-inter-i.ttf", fs.readFileSync(italic).toString("binary"))
+      doc.addFont("fe-inter-i.ttf", FARM_EVAL_FONT_INTER, "italic")
+      hasItalic = true
+    }
+    return { ok: true, hasItalic }
+  } catch (e) {
+    console.warn("[farmEvalPDF] Inter font registration failed:", (e as Error)?.message)
+    return { ok: false, hasItalic: false }
+  }
 }
 
 /** Downscale large Mapbox PNGs to limit memory / PDF size; returns JPEG when compressed. */
@@ -349,6 +406,10 @@ interface FarmEvalPDFData {
   siteName: string
   farmName: string
   locationStr: string
+  /** Customer / client-facing row (falls back to N/A when not on record) */
+  customerName: string
+  customerPhone: string
+  customerLocation: string
   infraHint: string
   soilRecorded?: string
   waterRecorded?: string
@@ -394,8 +455,10 @@ interface FarmEvalPDFData {
 interface FarmEvalPdfCtx {
   y: number
   pageW: number
-  dejaVu: boolean
-  dejaVuItalic: boolean
+  /** Embedded body font (Inter or DejaVu), or null → Helvetica */
+  customFont: string | null
+  hasItalic: boolean
+  useUnicodeRupee: boolean
 }
 
 type FarmEvalFontStyle = "normal" | "bold" | "italic"
@@ -404,10 +467,10 @@ function farmEvalSetFont(
   ctx: FarmEvalPdfCtx,
   style: FarmEvalFontStyle
 ): void {
-  if (ctx.dejaVu) {
-    if (style === "bold") doc.setFont(FARM_EVAL_FONT_CUSTOM, "bold")
-    else if (style === "italic" && ctx.dejaVuItalic) doc.setFont(FARM_EVAL_FONT_CUSTOM, "italic")
-    else doc.setFont(FARM_EVAL_FONT_CUSTOM, "normal")
+  if (ctx.customFont) {
+    if (style === "bold") doc.setFont(ctx.customFont, "bold")
+    else if (style === "italic" && ctx.hasItalic) doc.setFont(ctx.customFont, "italic")
+    else doc.setFont(ctx.customFont, "normal")
   } else {
     doc.setFont("helvetica", style)
   }
@@ -428,22 +491,23 @@ function farmEvalEndSection(doc: InstanceType<typeof jsPDF>, ctx: FarmEvalPdfCtx
 }
 
 function farmEvalDrawSectionHeading(doc: InstanceType<typeof jsPDF>, ctx: FarmEvalPdfCtx, title: string): void {
-  farmEvalEnsureSpace(doc, ctx, FARM_EVAL_SECTION_TITLE_RULE_MM + FARM_EVAL_GAP_SECTION + 4)
+  ctx.y += 1.5
+  farmEvalEnsureSpace(doc, ctx, FARM_EVAL_SECTION_TITLE_RULE_MM + FARM_EVAL_GAP_SECTION + 6)
   const { pageW } = ctx
   const top = ctx.y
   farmEvalSetFont(doc, ctx, "bold")
   doc.setFontSize(FARM_EVAL_FONT_SECTION)
   doc.setTextColor(...FARM_EVAL_RGB_TEXT_PRIMARY)
-  doc.text(title.toUpperCase(), FARM_EVAL_MARGIN_X, top + 5)
+  doc.text(title, FARM_EVAL_MARGIN_X, top + 5)
   doc.setDrawColor(...FARM_EVAL_RGB_DIVIDER)
-  doc.setLineWidth(0.25)
+  doc.setLineWidth(0.2)
   doc.line(
     FARM_EVAL_MARGIN_X,
     top + FARM_EVAL_SECTION_TITLE_RULE_MM,
     pageW - FARM_EVAL_MARGIN_X,
     top + FARM_EVAL_SECTION_TITLE_RULE_MM
   )
-  ctx.y = top + FARM_EVAL_SECTION_TITLE_RULE_MM + FARM_EVAL_GAP_SECTION
+  ctx.y = top + FARM_EVAL_SECTION_TITLE_RULE_MM + FARM_EVAL_GAP_SECTION + 1
 }
 
 const FARM_EVAL_MAP_CAPTION = "Satellite View with Site Boundary"
@@ -462,20 +526,20 @@ function farmEvalDrawProformaHeader(
   d: FarmEvalPDFData
 ): void {
   const { pageW } = ctx
-  const top = 12
-  const logoH = 10
-  const logoW = logoH * 2.1
-  const hasLogo = tryAddGrowteqLogoPng(doc, FARM_EVAL_MARGIN_X, top, logoW, logoH)
-  const titleX = hasLogo ? FARM_EVAL_MARGIN_X + logoW + 4 : FARM_EVAL_MARGIN_X
+  const top = 11
+  const logo = tryAddGrowteqLogoPngFit(doc, FARM_EVAL_MARGIN_X, top, FARM_EVAL_LOGO_MAX_HEIGHT_MM)
+  const titleBlockLeft = logo.drawn ? FARM_EVAL_MARGIN_X + logo.widthMm + 5 : FARM_EVAL_MARGIN_X
+  const headerRowH = Math.max(logo.drawn ? logo.heightMm : 0, 14)
+  const titleBaseline = top + headerRowH * 0.55
   farmEvalSetFont(doc, ctx, "bold")
   doc.setFontSize(FARM_EVAL_FONT_HEADER_BAR_TITLE)
   doc.setTextColor(...FARM_EVAL_RGB_TEXT_PRIMARY)
-  doc.text("Farm Evaluation Report", titleX, top + 7)
-  if (!hasLogo) {
+  doc.text("Farm Evaluation Report", titleBlockLeft, titleBaseline)
+  if (!logo.drawn) {
     farmEvalSetFont(doc, ctx, "normal")
     doc.setFontSize(FARM_EVAL_FONT_CAPTION)
     doc.setTextColor(...FARM_EVAL_RGB_TEXT_MUTED)
-    doc.text("Growteq Agri Farms Pvt Ltd", titleX, top + 12)
+    doc.text("Growteq Agri Farms Pvt Ltd", titleBlockLeft, titleBaseline + 5)
   }
   const issueDate = new Date().toLocaleDateString("en-IN", {
     day: "2-digit",
@@ -485,20 +549,67 @@ function farmEvalDrawProformaHeader(
   farmEvalSetFont(doc, ctx, "normal")
   doc.setFontSize(FARM_EVAL_FONT_CAPTION)
   doc.setTextColor(...FARM_EVAL_RGB_TEXT_MUTED)
-  doc.text(`Report ID: ${d.reportId}`, pageW - FARM_EVAL_MARGIN_X, top + 3, { align: "right" })
-  doc.text(issueDate, pageW - FARM_EVAL_MARGIN_X, top + 8, { align: "right" })
-  const ruleY = top + 16
+  const metaTop = top + 1.5
+  doc.text(`Report ID: ${d.reportId}`, pageW - FARM_EVAL_MARGIN_X, metaTop, { align: "right" })
+  doc.text(issueDate, pageW - FARM_EVAL_MARGIN_X, metaTop + 5, { align: "right" })
+  const ruleY = top + headerRowH + 4
   doc.setDrawColor(...FARM_EVAL_RGB_DIVIDER)
-  doc.setLineWidth(0.25)
+  doc.setLineWidth(0.2)
   doc.line(FARM_EVAL_MARGIN_X, ruleY, pageW - FARM_EVAL_MARGIN_X, ruleY)
-  ctx.y = ruleY + 7
+  ctx.y = ruleY + 6
+}
+
+function farmEvalPdfFieldNA(v: unknown): string {
+  if (v == null) return "N/A"
+  const s = String(v).trim()
+  return s.length > 0 ? s : "N/A"
+}
+
+function renderFarmEvalCustomerDetails(
+  doc: InstanceType<typeof jsPDF>,
+  d: FarmEvalPDFData,
+  ctx: FarmEvalPdfCtx
+): void {
+  farmEvalDrawSectionHeading(doc, ctx, "Customer details")
+  const midX = ctx.pageW / 2
+  const gapMm = 8 / 2.834
+  const rows: [string, string][] = [
+    ["Name", d.customerName],
+    ["Mobile", d.customerPhone],
+    ["Location", d.customerLocation],
+  ]
+  for (let i = 0; i < rows.length; i += 2) {
+    farmEvalEnsureSpace(doc, ctx, FARM_EVAL_ROW_PAIR_MM + gapMm)
+    const left = rows[i]
+    const right = rows[i + 1]
+    if (left) {
+      doc.setFontSize(FARM_EVAL_FONT_BODY)
+      farmEvalSetFont(doc, ctx, "normal")
+      doc.setTextColor(...FARM_EVAL_RGB_TEXT_LABEL)
+      doc.text(left[0], FARM_EVAL_MARGIN_X, ctx.y)
+      farmEvalSetFont(doc, ctx, "bold")
+      doc.setTextColor(...FARM_EVAL_RGB_TEXT_PRIMARY)
+      doc.text(left[1], FARM_EVAL_MARGIN_X, ctx.y + FARM_EVAL_GAP_LINE + 0.5)
+    }
+    if (right) {
+      doc.setFontSize(FARM_EVAL_FONT_BODY)
+      farmEvalSetFont(doc, ctx, "normal")
+      doc.setTextColor(...FARM_EVAL_RGB_TEXT_LABEL)
+      doc.text(right[0], midX + gapMm / 2, ctx.y)
+      farmEvalSetFont(doc, ctx, "bold")
+      doc.setTextColor(...FARM_EVAL_RGB_TEXT_PRIMARY)
+      doc.text(right[1], midX + gapMm / 2, ctx.y + FARM_EVAL_GAP_LINE + 0.5)
+    }
+    ctx.y += FARM_EVAL_ROW_PAIR_MM + gapMm
+  }
+  farmEvalEndSection(doc, ctx)
 }
 
 /** Watermark + footer on all pages. Call after all content is written. */
 function farmEvalApplyWatermarkAndFooters(
   doc: InstanceType<typeof jsPDF>,
   reportId: string,
-  opts: { dejaVu: boolean }
+  opts: { footerFont: string | null }
 ): void {
   const pageW = 210
   const total = doc.getNumberOfPages()
@@ -511,14 +622,14 @@ function farmEvalApplyWatermarkAndFooters(
     doc.setFontSize(FARM_EVAL_FONT_WATERMARK)
     doc.text(FARM_EVAL_WATERMARK_TEXT, pageW / 2, 152, { align: "center", angle: 40 })
     doc.restoreGraphicsState()
-    const ruleY = 276
-    const footerTextY = 283
+    const ruleY = 275
+    const footerTextY = 284
     doc.setDrawColor(...FARM_EVAL_RGB_DIVIDER)
-    doc.setLineWidth(0.2)
+    doc.setLineWidth(0.15)
     doc.line(FARM_EVAL_MARGIN_X, ruleY, pageW - FARM_EVAL_MARGIN_X, ruleY)
-    if (opts.dejaVu) doc.setFont(FARM_EVAL_FONT_CUSTOM, "normal")
+    if (opts.footerFont) doc.setFont(opts.footerFont, "normal")
     else doc.setFont("helvetica", "normal")
-    doc.setFontSize(FARM_EVAL_FONT_CAPTION)
+    doc.setFontSize(8.5)
     doc.setTextColor(...FARM_EVAL_RGB_TEXT_MUTED)
     doc.text("Growteq Agri Farms Pvt Ltd", FARM_EVAL_MARGIN_X, footerTextY)
     doc.text(reportId, pageW / 2, footerTextY, { align: "center" })
@@ -546,7 +657,7 @@ function renderFarmEvalExecutiveSummary(
 }
 
 function renderFarmEvalFarmDetails(doc: InstanceType<typeof jsPDF>, d: FarmEvalPDFData, ctx: FarmEvalPdfCtx): void {
-  farmEvalDrawSectionHeading(doc, ctx, `Site: ${d.siteName}`)
+  farmEvalDrawSectionHeading(doc, ctx, "Site details")
   const midX = ctx.pageW / 2
   const leftCol: [string, string][] = [
     ["Farm name", (d.farmName || "—").trim() || "—"],
@@ -712,7 +823,7 @@ function renderFarmEvalCostEstimation(
   d: FarmEvalPDFData,
   ctx: FarmEvalPdfCtx
 ): void {
-  const inr = (n: number) => fmtInrPdf(n, ctx.dejaVu)
+  const inr = (n: number) => fmtInrPdf(n, ctx.useUnicodeRupee)
   farmEvalDrawSectionHeading(doc, ctx, "Cost estimation")
   if (!d.costRows.length) {
     farmEvalEnsureSpace(doc, ctx, FARM_EVAL_ROW_PAIR_MM)
@@ -736,7 +847,7 @@ function renderFarmEvalCostEstimation(
     innerR,
   ]
   const xQtyCenter = (b[2] + b[3]) / 2
-  const headH = 8.5
+  const headH = 9
   farmEvalEnsureSpace(doc, ctx, headH + 6)
   const tableTop = ctx.y
   doc.setFillColor(...FARM_EVAL_RGB_TABLE_HEADER)
@@ -750,11 +861,11 @@ function renderFarmEvalCostEstimation(
   farmEvalSetFont(doc, ctx, "bold")
   doc.setFontSize(FARM_EVAL_FONT_CAPTION)
   doc.setTextColor(...FARM_EVAL_RGB_TEXT_PRIMARY)
-  doc.text("Component", b[0] + 1.5, tableTop + 5.8)
-  doc.text("Description", b[1] + 1.5, tableTop + 5.8)
-  doc.text("Qty", xQtyCenter, tableTop + 5.8, { align: "center" })
-  doc.text("Unit cost", b[4] - 1.5, tableTop + 5.8, { align: "right" })
-  doc.text("Total", b[5] - 1.5, tableTop + 5.8, { align: "right" })
+  doc.text("Component", b[0] + 2, tableTop + 6.2)
+  doc.text("Description", b[1] + 2, tableTop + 6.2)
+  doc.text("Qty", xQtyCenter, tableTop + 6.2, { align: "center" })
+  doc.text("Unit cost", b[4] - 2, tableTop + 6.2, { align: "right" })
+  doc.text("Total", b[5] - 2, tableTop + 6.2, { align: "right" })
   ctx.y = tableTop + headH
   d.costRows.forEach((row, ri) => {
     farmEvalSetFont(doc, ctx, "normal")
@@ -764,7 +875,7 @@ function renderFarmEvalCostEstimation(
     const compLines = doc.splitTextToSize(row.component, wc).slice(0, 2)
     const descLines = doc.splitTextToSize(row.description, wd).slice(0, 2)
     const n = Math.max(compLines.length, descLines.length, 1)
-    const rowH = 4.5 + n * FARM_EVAL_GAP_LINE + 0.5
+    const rowH = 5 + n * FARM_EVAL_GAP_LINE + 0.5
     farmEvalEnsureSpace(doc, ctx, rowH + 2)
     const rowTop = ctx.y
     if (ri % 2 === 0) {
@@ -778,7 +889,7 @@ function renderFarmEvalCostEstimation(
       doc.line(b[vi], rowTop, b[vi], rowTop + rowH)
     }
     doc.setTextColor(...FARM_EVAL_RGB_TEXT_BODY)
-    const yy = rowTop + 3.5
+    const yy = rowTop + 4
     for (let j = 0; j < n; j++) {
       if (compLines[j]) doc.text(compLines[j], b[0] + 1.5, yy + j * FARM_EVAL_GAP_LINE)
       if (descLines[j]) doc.text(descLines[j], b[1] + 1.5, yy + j * FARM_EVAL_GAP_LINE)
@@ -868,22 +979,25 @@ function renderFarmEvalImplementationPlan(
 function renderFarmEvalSiteMap(doc: InstanceType<typeof jsPDF>, d: FarmEvalPDFData, ctx: FarmEvalPdfCtx): void {
   if (!d.mapBase64?.trim()) return
   farmEvalDrawSectionHeading(doc, ctx, "Site map")
-  ctx.y += 1
-  farmEvalSetFont(doc, ctx, "italic")
-  doc.setFontSize(FARM_EVAL_FONT_CAPTION)
-  doc.setTextColor(...FARM_EVAL_RGB_TEXT_MUTED)
-  farmEvalEnsureSpace(doc, ctx, FARM_EVAL_GAP_LINE * 3)
-  doc.text(FARM_EVAL_MAP_CAPTION, ctx.pageW / 2, ctx.y, { align: "center" })
-  ctx.y += FARM_EVAL_GAP_LINE * 2 + 1
+  ctx.y += 2.5
   const mapW = ctx.pageW - 2 * FARM_EVAL_MARGIN_X
   const mapH = 72
   const mapX = FARM_EVAL_MARGIN_X
+  const borderPad = 0.75
   try {
     const mime = d.mapImageKind === "JPEG" ? "jpeg" : "png"
     const imgData = `data:image/${mime};base64,${d.mapBase64.trim()}`
-    farmEvalEnsureSpace(doc, ctx, mapH + 8)
+    farmEvalEnsureSpace(doc, ctx, mapH + borderPad * 2 + 16)
+    doc.setDrawColor(...FARM_EVAL_RGB_DIVIDER)
+    doc.setLineWidth(0.35)
+    doc.rect(mapX - borderPad, ctx.y - borderPad, mapW + borderPad * 2, mapH + borderPad * 2, "S")
     doc.addImage(imgData, d.mapImageKind, mapX, ctx.y, mapW, mapH)
-    ctx.y += mapH + 5
+    ctx.y += mapH + borderPad * 2 + 3
+    farmEvalSetFont(doc, ctx, "normal")
+    doc.setFontSize(7.8)
+    doc.setTextColor(...FARM_EVAL_RGB_TEXT_MUTED)
+    doc.text(FARM_EVAL_MAP_CAPTION, ctx.pageW / 2, ctx.y, { align: "center" })
+    ctx.y += FARM_EVAL_GAP_LINE + 1
   } catch (e: unknown) {
     console.error("[farmEvalPDF] map embed error:", e instanceof Error ? e.message : e)
     farmEvalEnsureSpace(doc, ctx, 24)
@@ -899,7 +1013,7 @@ function renderFarmEvalSiteMap(doc: InstanceType<typeof jsPDF>, d: FarmEvalPDFDa
 }
 
 function renderFarmEvalRoi(doc: InstanceType<typeof jsPDF>, d: FarmEvalPDFData, ctx: FarmEvalPdfCtx): void {
-  const inr = (n: number) => fmtInrPdf(n, ctx.dejaVu)
+  const inr = (n: number) => fmtInrPdf(n, ctx.useUnicodeRupee)
   farmEvalDrawSectionHeading(doc, ctx, "ROI analysis")
   const invLabel =
     d.totalInvestmentAmount > 0 ? inr(d.totalInvestmentAmount) : "Data not available"
@@ -1015,9 +1129,24 @@ async function createFarmEvaluationProformaPDF(
     const mapPrepared = await farmEvalPrepareMapImage(mapBase64)
     const doc = new jsPDF({ orientation: "portrait", unit: "mm", format: "a4" })
     const pageW = 210
-    const { ok: dejaVu, hasItalic: dejaVuItalic } = farmEvalRegisterDejaVu(doc)
-    const inr = (n: number) => fmtInrPdf(n, dejaVu)
-    const ctx: FarmEvalPdfCtx = { y: 20, pageW, dejaVu, dejaVuItalic }
+    const interReg = farmEvalRegisterInter(doc)
+    let customFont: string | null = null
+    let hasItalic = false
+    let useUnicodeRupee = false
+    if (interReg.ok) {
+      customFont = FARM_EVAL_FONT_INTER
+      hasItalic = interReg.hasItalic
+      useUnicodeRupee = true
+    } else {
+      const dj = farmEvalRegisterDejaVu(doc)
+      if (dj.ok) {
+        customFont = FARM_EVAL_FONT_DEJAVU
+        hasItalic = dj.hasItalic
+        useUnicodeRupee = true
+      }
+    }
+    const inr = (n: number) => fmtInrPdf(n, useUnicodeRupee)
+    const ctx: FarmEvalPdfCtx = { y: 20, pageW, customFont, hasItalic, useUnicodeRupee }
 
     const areaAc = Number(siteDoc?.area) || 0
     const perimeterM = Number(siteDoc?.perimeter) || 0
@@ -1160,12 +1289,26 @@ async function createFarmEvaluationProformaPDF(
     }
     const executiveSummaryLines = [landSuitLine, infraLine, investLine, advantageLine]
 
+    const farmRec =
+      farm && typeof farm === "object" ? (farm as Record<string, unknown>) : ({} as Record<string, unknown>)
+    const customerName = farmEvalPdfFieldNA(
+      farmRec.customerName ?? farmRec.clientName ?? farm?.name
+    )
+    const customerPhone = farmEvalPdfFieldNA(
+      farmRec.phone ?? farmRec.mobile ?? farmRec.contactPhone ?? farmRec.customerPhone
+    )
+    const geoCustomerLoc = [farm?.location, farm?.district, farm?.state].filter(Boolean).join(", ")
+    const customerLocation = farmEvalPdfFieldNA(geoCustomerLoc || null)
+
     /** Single derived snapshot for all section renderers (keep in sync; do not scatter duplicates). */
     const pdfData: FarmEvalPDFData = {
       siteName: siteDoc?.name || "Unnamed site",
       farmName: farm?.name || "N/A",
       locationStr:
         [farm?.location, farm?.district, farm?.state].filter(Boolean).join(", ") || "N/A",
+      customerName,
+      customerPhone,
+      customerLocation,
       infraHint,
       soilRecorded: evDoc?.soilType,
       waterRecorded: evDoc?.waterAvailability,
@@ -1209,8 +1352,9 @@ async function createFarmEvaluationProformaPDF(
     }
 
     farmEvalDrawProformaHeader(doc, ctx, pdfData)
-    renderFarmEvalExecutiveSummary(doc, pdfData, ctx)
+    renderFarmEvalCustomerDetails(doc, pdfData, ctx)
     renderFarmEvalFarmDetails(doc, pdfData, ctx)
+    renderFarmEvalExecutiveSummary(doc, pdfData, ctx)
     renderFarmEvalBoundaryAnalysis(doc, pdfData, ctx)
     renderFarmEvalEvaluationSummary(doc, pdfData, ctx)
     renderFarmEvalInfrastructure(doc, pdfData, ctx)
@@ -1220,7 +1364,7 @@ async function createFarmEvaluationProformaPDF(
     renderFarmEvalSiteMap(doc, pdfData, ctx)
     renderFarmEvalNotes(doc, pdfData, ctx)
 
-    farmEvalApplyWatermarkAndFooters(doc, reportId, { dejaVu })
+    farmEvalApplyWatermarkAndFooters(doc, reportId, { footerFont: customFont })
 
     const buffer = Buffer.from(doc.output("arraybuffer"))
     console.log(

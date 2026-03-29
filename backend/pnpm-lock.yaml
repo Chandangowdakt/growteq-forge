@@ -44,6 +44,9 @@ importers:
       sharp:
         specifier: ^0.34.5
         version: 0.34.5
+      typeface-inter:
+        specifier: ^3.18.1
+        version: 3.18.1
     devDependencies:
       '@types/bcryptjs':
         specifier: ^2.4.6
@@ -1131,6 +1134,9 @@ packages:
   type-is@1.6.18:
     resolution: {integrity: sha512-TkRKr9sUTxEH8MdfuCSP7VizJyzRNMjj2J2do2Jr3Kym598JVdEksuzPQCnlFPW4ky9Q+iA+ma9BGm06XQBy8g==}
     engines: {node: '>= 0.6'}
+
+  typeface-inter@3.18.1:
+    resolution: {integrity: sha512-c+TBanYFCvmg3j5vPk+zxK4ocMZbPxMEmjnwG7rPQoV87xvQ6b07VbAOC0Va0XBbbZCGw6cWNeFuLeg1YQru3Q==}
 
   typescript@5.9.3:
     resolution: {integrity: sha512-jl1vZzPDinLr9eUt3J/t7V6FgNEw9QjvBPdysz9KfQDD41fQrC2Y4vKQdiaUpFT4bXlb1RHhLpp8wtm6M5TgSw==}
@@ -2264,6 +2270,8 @@ snapshots:
     dependencies:
       media-typer: 0.3.0
       mime-types: 2.1.35
+
+  typeface-inter@3.18.1: {}
 
   typescript@5.9.3: {}
 
