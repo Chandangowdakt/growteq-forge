@@ -149,14 +149,12 @@ const FARM_EVAL_RGB_TEXT_BODY: [number, number, number] = [31, 41, 55]
 const FARM_EVAL_RGB_TEXT_MUTED: [number, number, number] = [107, 114, 128]
 const FARM_EVAL_RGB_TEXT_LABEL: [number, number, number] = [107, 114, 128]
 const FARM_EVAL_RGB_HEADER_META: [number, number, number] = [107, 114, 128]
-const FARM_EVAL_RGB_WATERMARK: [number, number, number] = [244, 246, 244]
 const FARM_EVAL_RGB_PLACEHOLDER_BG: [number, number, number] = [240, 240, 240]
 const FARM_EVAL_RGB_PLACEHOLDER_TEXT: [number, number, number] = [120, 120, 120]
 const FARM_EVAL_FONT_SECTION = 10.5
 const FARM_EVAL_FONT_BODY = 10
 const FARM_EVAL_FONT_CAPTION = 8.5
 const FARM_EVAL_FONT_HEADER_BAR_TITLE = 14
-const FARM_EVAL_FONT_WATERMARK = 36
 const FARM_EVAL_GAP_SECTION = 7
 const FARM_EVAL_GAP_LINE = 4.25
 const FARM_EVAL_MARGIN_X = 14
@@ -164,7 +162,6 @@ const FARM_EVAL_Y_MAX_CONTENT = 266
 const FARM_EVAL_ROW_PAIR_MM = 11
 const FARM_EVAL_SECTION_TITLE_RULE_MM = 8
 
-const FARM_EVAL_WATERMARK_TEXT = "CONFIDENTIAL"
 const FARM_EVAL_FONT_DEJAVU = "FarmEvalDejaVu"
 const FARM_EVAL_FONT_INTER = "FarmEvalInter"
 /** ~50 CSS px height at 96dpi → mm */
@@ -605,7 +602,7 @@ function renderFarmEvalCustomerDetails(
   farmEvalEndSection(doc, ctx)
 }
 
-/** Watermark + footer on all pages. Call after all content is written. */
+/** Footer on all pages. Call after all content is written. */
 function farmEvalApplyWatermarkAndFooters(
   doc: InstanceType<typeof jsPDF>,
   reportId: string,
@@ -616,12 +613,6 @@ function farmEvalApplyWatermarkAndFooters(
   const bodyPages = Math.max(1, total)
   for (let p = 1; p <= total; p++) {
     doc.setPage(p)
-    doc.saveGraphicsState()
-    doc.setTextColor(...FARM_EVAL_RGB_WATERMARK)
-    doc.setFont("helvetica", "bold")
-    doc.setFontSize(FARM_EVAL_FONT_WATERMARK)
-    doc.text(FARM_EVAL_WATERMARK_TEXT, pageW / 2, 152, { align: "center", angle: 40 })
-    doc.restoreGraphicsState()
     const ruleY = 275
     const footerTextY = 284
     doc.setDrawColor(...FARM_EVAL_RGB_DIVIDER)
@@ -771,6 +762,196 @@ function renderFarmEvalEvaluationSummary(
     }
     ctx.y += FARM_EVAL_ROW_PAIR_MM + FARM_EVAL_GAP_LINE
   }
+  farmEvalEndSection(doc, ctx)
+}
+
+type FarmEvalCropInfra = "polyhouse" | "shade_net" | "open_field"
+
+function farmEvalNormalizeCropInfra(hint: string): FarmEvalCropInfra {
+  const k = String(hint || "")
+    .toLowerCase()
+    .replace(/\s+/g, "_")
+  if (k === "shade_net" || k === "shadenet") return "shade_net"
+  if (k === "open_field" || k === "openfield") return "open_field"
+  return "polyhouse"
+}
+
+const FARM_EVAL_CROP_SYMBOL = { ok: "\u2714", mid: "\u26A0", no: "\u2716" } as const
+
+/** Suitability matrix for optional summary table (✔ / ⚠ / ✖). */
+const FARM_EVAL_CROP_TABLE_ROWS: Array<{
+  label: string
+  polyhouse: keyof typeof FARM_EVAL_CROP_SYMBOL
+  shade_net: keyof typeof FARM_EVAL_CROP_SYMBOL
+  open_field: keyof typeof FARM_EVAL_CROP_SYMBOL
+}> = [
+  { label: "Tomato", polyhouse: "ok", shade_net: "ok", open_field: "ok" },
+  { label: "Cucumber", polyhouse: "ok", shade_net: "ok", open_field: "mid" },
+  { label: "Bell Pepper", polyhouse: "ok", shade_net: "mid", open_field: "ok" },
+  { label: "Lettuce", polyhouse: "mid", shade_net: "ok", open_field: "no" },
+  { label: "Wheat", polyhouse: "no", shade_net: "no", open_field: "ok" },
+]
+
+function renderFarmEvalCropRecommendation(
+  doc: InstanceType<typeof jsPDF>,
+  d: FarmEvalPDFData,
+  ctx: FarmEvalPdfCtx
+): void {
+  const infraNorm = farmEvalNormalizeCropInfra(d.infraHint)
+  const packs: Record<
+    FarmEvalCropInfra,
+    { rec: [string, string][]; alt: [string, string][] }
+  > = {
+    polyhouse: {
+      rec: [
+        ["Tomato", "High suitability"],
+        ["Cucumber", "Fast growth"],
+        ["Bell Pepper", "High market value"],
+      ],
+      alt: [["Lettuce", "Short cycle crop"]],
+    },
+    shade_net: {
+      rec: [
+        ["Tomato", "High suitability"],
+        ["Cucumber", "Fast growth"],
+        ["Lettuce", "Short cycle crop"],
+      ],
+      alt: [["Bell Pepper", "High market value"]],
+    },
+    open_field: {
+      rec: [
+        ["Wheat", "Staple grain fit"],
+        ["Tomato", "High suitability"],
+        ["Bell Pepper", "High market value"],
+      ],
+      alt: [["Cucumber", "Seasonal / rotation fit"]],
+    },
+  }
+  const pack = packs[infraNorm]
+
+  farmEvalDrawSectionHeading(doc, ctx, "CROP RECOMMENDATION")
+  ctx.y += 1.5
+
+  farmEvalEnsureSpace(doc, ctx, 10)
+  farmEvalSetFont(doc, ctx, "normal")
+  doc.setFontSize(FARM_EVAL_FONT_BODY)
+  doc.setTextColor(...FARM_EVAL_RGB_TEXT_MUTED)
+  const contextLine = `Based on evaluation: ${d.soilRecorded ?? "N/A"} soil, ${d.waterRecorded ?? "N/A"} water availability, ${d.slopePctLabel} slope.`
+  const contextWrapped = doc.splitTextToSize(contextLine, ctx.pageW - 2 * FARM_EVAL_MARGIN_X)
+  doc.text(contextWrapped, FARM_EVAL_MARGIN_X, ctx.y)
+  ctx.y += contextWrapped.length * FARM_EVAL_GAP_LINE + 2.5
+
+  farmEvalEnsureSpace(doc, ctx, 6)
+  farmEvalSetFont(doc, ctx, "bold")
+  doc.setFontSize(FARM_EVAL_FONT_BODY)
+  doc.setTextColor(...FARM_EVAL_RGB_TEXT_PRIMARY)
+  doc.text(`Recommended infrastructure: ${d.infraTypeDisplay}`, FARM_EVAL_MARGIN_X, ctx.y)
+  ctx.y += FARM_EVAL_GAP_LINE + 3.5
+
+  farmEvalEnsureSpace(doc, ctx, 6)
+  farmEvalSetFont(doc, ctx, "bold")
+  doc.setTextColor(...FARM_EVAL_RGB_TEXT_PRIMARY)
+  doc.text("Recommended crops", FARM_EVAL_MARGIN_X, ctx.y)
+  ctx.y += FARM_EVAL_GAP_LINE + 2.5
+
+  farmEvalSetFont(doc, ctx, "normal")
+  doc.setFontSize(FARM_EVAL_FONT_BODY)
+  for (const [name, note] of pack.rec) {
+    farmEvalEnsureSpace(doc, ctx, FARM_EVAL_GAP_LINE * 2 + 1)
+    doc.setTextColor(...FARM_EVAL_RGB_TEXT_PRIMARY)
+    const line = `${FARM_EVAL_CROP_SYMBOL.ok} ${name} \u2014 ${note}`
+    doc.text(line, FARM_EVAL_MARGIN_X + 2, ctx.y)
+    ctx.y += FARM_EVAL_GAP_LINE + 1.25
+  }
+
+  ctx.y += 2
+  farmEvalEnsureSpace(doc, ctx, 6)
+  farmEvalSetFont(doc, ctx, "bold")
+  doc.setFontSize(FARM_EVAL_FONT_BODY)
+  doc.setTextColor(...FARM_EVAL_RGB_TEXT_MUTED)
+  doc.text("Alternative crops", FARM_EVAL_MARGIN_X, ctx.y)
+  ctx.y += FARM_EVAL_GAP_LINE + 2.5
+
+  farmEvalSetFont(doc, ctx, "normal")
+  doc.setFontSize(FARM_EVAL_FONT_BODY)
+  for (const [name, note] of pack.alt) {
+    farmEvalEnsureSpace(doc, ctx, FARM_EVAL_GAP_LINE * 2 + 1)
+    doc.setTextColor(...FARM_EVAL_RGB_TEXT_MUTED)
+    doc.text(`\u2022 ${name} \u2014 ${note}`, FARM_EVAL_MARGIN_X + 2, ctx.y)
+    ctx.y += FARM_EVAL_GAP_LINE + 1.25
+  }
+
+  ctx.y += 3
+  const innerL = FARM_EVAL_MARGIN_X
+  const innerR = ctx.pageW - FARM_EVAL_MARGIN_X
+  const u = innerR - innerL
+  const colW = [u * 0.34, u * 0.22, u * 0.22, u * 0.22]
+  const x1 = innerL
+  const x2 = x1 + colW[0]
+  const x3 = x2 + colW[1]
+  const x4 = x3 + colW[2]
+  const headH = 7.5
+  const rowH = 5.8
+  const nRows = 1 + FARM_EVAL_CROP_TABLE_ROWS.length
+  farmEvalEnsureSpace(doc, ctx, headH + nRows * rowH + 8)
+
+  const tableTop = ctx.y
+  doc.setFillColor(...FARM_EVAL_RGB_TABLE_HEADER)
+  doc.rect(innerL, tableTop, u, headH, "F")
+  doc.setDrawColor(...FARM_EVAL_RGB_DIVIDER)
+  doc.setLineWidth(0.2)
+  doc.rect(innerL, tableTop, u, headH, "S")
+  doc.line(x2, tableTop, x2, tableTop + headH)
+  doc.line(x3, tableTop, x3, tableTop + headH)
+  doc.line(x4, tableTop, x4, tableTop + headH)
+
+  farmEvalSetFont(doc, ctx, "bold")
+  doc.setFontSize(FARM_EVAL_FONT_CAPTION)
+  doc.setTextColor(...FARM_EVAL_RGB_TEXT_PRIMARY)
+  doc.text("Crop", x1 + 1.5, tableTop + 5)
+  doc.text("Polyhouse", (x2 + x3) / 2, tableTop + 5, { align: "center" })
+  doc.text("Shade net", (x3 + x4) / 2, tableTop + 5, { align: "center" })
+  doc.text("Open field", (x4 + innerR) / 2, tableTop + 5, { align: "center" })
+
+  let rowY = tableTop + headH
+  FARM_EVAL_CROP_TABLE_ROWS.forEach((row, ri) => {
+    if (ri % 2 === 0) {
+      doc.setFillColor(...FARM_EVAL_RGB_TABLE_ZEBRA)
+      doc.rect(innerL, rowY, u, rowH, "F")
+    }
+    doc.setDrawColor(...FARM_EVAL_RGB_DIVIDER)
+    doc.setLineWidth(0.12)
+    doc.line(innerL, rowY + rowH, innerR, rowY + rowH)
+    doc.line(x2, rowY, x2, rowY + rowH)
+    doc.line(x3, rowY, x3, rowY + rowH)
+    doc.line(x4, rowY, x4, rowY + rowH)
+
+    farmEvalSetFont(doc, ctx, "normal")
+    doc.setFontSize(FARM_EVAL_FONT_CAPTION)
+    doc.setTextColor(...FARM_EVAL_RGB_TEXT_BODY)
+    doc.text(row.label, x1 + 1.5, rowY + 4.2)
+    const c1 = FARM_EVAL_CROP_SYMBOL[row.polyhouse]
+    const c2 = FARM_EVAL_CROP_SYMBOL[row.shade_net]
+    const c3 = FARM_EVAL_CROP_SYMBOL[row.open_field]
+    doc.text(c1, (x2 + x3) / 2, rowY + 4.2, { align: "center" })
+    doc.text(c2, (x3 + x4) / 2, rowY + 4.2, { align: "center" })
+    doc.text(c3, (x4 + innerR) / 2, rowY + 4.2, { align: "center" })
+    rowY += rowH
+  })
+
+  doc.setLineWidth(0.2)
+  doc.line(innerL, tableTop, innerL, rowY)
+  doc.line(innerR, tableTop, innerR, rowY)
+  doc.line(innerL, rowY, innerR, rowY)
+
+  ctx.y = rowY + 2
+  farmEvalSetFont(doc, ctx, "normal")
+  doc.setFontSize(FARM_EVAL_FONT_CAPTION - 0.5)
+  doc.setTextColor(...FARM_EVAL_RGB_TEXT_MUTED)
+  const leg = `${FARM_EVAL_CROP_SYMBOL.ok} suitable   ${FARM_EVAL_CROP_SYMBOL.mid} moderate   ${FARM_EVAL_CROP_SYMBOL.no} not suitable`
+  doc.text(leg, innerL, ctx.y)
+  ctx.y += FARM_EVAL_GAP_LINE + 2
+
   farmEvalEndSection(doc, ctx)
 }
 
@@ -1357,6 +1538,7 @@ async function createFarmEvaluationProformaPDF(
     renderFarmEvalExecutiveSummary(doc, pdfData, ctx)
     renderFarmEvalBoundaryAnalysis(doc, pdfData, ctx)
     renderFarmEvalEvaluationSummary(doc, pdfData, ctx)
+    renderFarmEvalCropRecommendation(doc, pdfData, ctx)
     renderFarmEvalInfrastructure(doc, pdfData, ctx)
     renderFarmEvalCostEstimation(doc, pdfData, ctx)
     renderFarmEvalRoi(doc, pdfData, ctx)
