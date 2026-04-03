@@ -91,16 +91,23 @@ function copyLogoForPDF() {
 const app = express()
 
 const PORT = Number(process.env.PORT || 5000)
-const frontendUrl = process.env.FRONTEND_URL || process.env.FRONTEND_ORIGIN || "http://localhost:3000"
 
-app.use(
-  cors({
-    origin: [frontendUrl, "http://localhost:3000"],
-    credentials: true,
-    methods: ["GET", "POST", "PATCH", "PUT", "DELETE", "OPTIONS"],
-    allowedHeaders: ["Content-Type", "Authorization", "Cache-Control"],
-  })
+const corsOrigins = Array.from(
+  new Set(
+    [process.env.FRONTEND_URL, process.env.FRONTEND_ORIGIN, "http://localhost:3000"].filter(
+      (o): o is string => typeof o === "string" && o.trim().length > 0
+    )
+  )
 )
+const corsOptions: cors.CorsOptions = {
+  origin: corsOrigins.length <= 1 ? corsOrigins[0] ?? "http://localhost:3000" : corsOrigins,
+  credentials: true,
+  methods: ["GET", "POST", "PATCH", "PUT", "DELETE", "OPTIONS"],
+  allowedHeaders: ["Content-Type", "Authorization", "Cache-Control"],
+}
+
+app.use(cors(corsOptions))
+app.options("*", cors(corsOptions))
 app.use(express.json())
 app.use(requestLogger)
 
@@ -160,8 +167,10 @@ async function start() {
   const mapbox = process.env.MAPBOX_TOKEN?.trim()
   if (!mapbox) {
     console.warn("[Server] MAPBOX_TOKEN is missing or empty — PDF site maps will use a placeholder.")
+  } else if (process.env.NODE_ENV !== "production") {
+    console.log("[Server] MAPBOX_TOKEN is set (length", mapbox.length + ").")
   } else {
-    console.log("[Server] MAPBOX_TOKEN is set (length", mapbox.length + ", preview", mapbox.slice(0, 8) + "…).")
+    console.log("[Server] MAPBOX_TOKEN is configured.")
   }
   console.log("FRONTEND_URL:", process.env.FRONTEND_URL)
   console.log("PORT:", process.env.PORT)

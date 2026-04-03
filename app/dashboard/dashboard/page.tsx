@@ -115,17 +115,30 @@ function DashboardWorkContent() {
                         ? { class: "bg-green-100 text-green-800", label: "Approved" }
                         : site.status === "submitted"
                           ? { class: "bg-blue-100 text-blue-800", label: "Submitted" }
-                          : { class: "bg-gray-100 text-gray-800", label: "In Progress" }
+                          : { class: "bg-gray-100 text-gray-800", label: "Draft" }
+                  const mapHref =
+                    site.farmId && site.siteId
+                      ? `/dashboard/farms/${site.farmId}/sites/${site.siteId}`
+                      : "/dashboard/farms"
+                  const financeHref =
+                    site.siteId != null && site.siteId !== ""
+                      ? `/dashboard/finance?siteId=${encodeURIComponent(site.siteId)}`
+                      : "/dashboard/finance"
+                  const proposalHref =
+                    site.proposalId != null && site.proposalId !== ""
+                      ? `/dashboard/proposals/${site.proposalId}`
+                      : "/dashboard/reports"
                   return (
                   <div key={site._id} className="p-4 border rounded-lg hover:bg-gray-50">
-                    <div className="flex items-start justify-between mb-3">
-                      <div className="flex-1">
+                    <div className="flex items-start justify-between gap-2 mb-3">
+                      <div className="flex-1 min-w-0">
                         <p className="font-medium text-sm">{site.farmName}</p>
+                        <p className="text-sm text-foreground mt-0.5">{site.siteName}</p>
                         <p className="text-xs text-muted-foreground mt-1">
-                          Marked {timeAgo(site.updatedAt)} • {points} points
+                          Updated {timeAgo(site.updatedAt)} • Boundary {points} pts
                         </p>
                       </div>
-                      <span className={`px-2 py-1 rounded text-xs font-medium ${badge.class}`}>
+                      <span className={`shrink-0 px-2 py-1 rounded-full text-xs font-medium capitalize ${badge.class}`}>
                         {badge.label}
                       </span>
                     </div>
@@ -135,17 +148,28 @@ function DashboardWorkContent() {
                         <p className="font-bold text-[#387F43]">{site.area} acres</p>
                       </div>
                       <div className="p-2 bg-gray-50 rounded">
-                        <p className="text-xs text-muted-foreground">Points</p>
-                        <p className="font-bold">{points}</p>
+                        <p className="text-xs text-muted-foreground">Boundary</p>
+                        <p className="font-bold">{points} pts</p>
                       </div>
                       <div className="p-2 bg-gray-50 rounded">
-                        <p className="text-xs text-muted-foreground">Status</p>
-                        <p className="font-bold text-green-600">Status: {site.completionPercentage}%</p>
+                        <p className="text-xs text-muted-foreground">Completion</p>
+                        <p className="font-bold text-foreground">{site.completionPercentage}%</p>
                       </div>
                     </div>
-                    <Button asChild size="sm" className="w-full bg-[#387F43] hover:bg-[#2d6535]">
-                      <Link href="/dashboard/farms">Continue Editing</Link>
-                    </Button>
+                    <div className="grid grid-cols-2 gap-2">
+                      <Button asChild size="sm" variant="outline" className="w-full border-[#387F43] text-[#387F43] hover:bg-green-50">
+                        <Link href={`/dashboard/site-evaluations/${site._id}`}>Evaluate Site</Link>
+                      </Button>
+                      <Button asChild size="sm" variant="outline" className="w-full border-blue-600 text-blue-700 hover:bg-blue-50">
+                        <Link href={mapHref}>View Map</Link>
+                      </Button>
+                      <Button asChild size="sm" variant="outline" className="w-full border-orange-600 text-orange-700 hover:bg-orange-50">
+                        <Link href={financeHref}>Estimate Cost</Link>
+                      </Button>
+                      <Button asChild size="sm" variant="outline" className="w-full border-purple-600 text-purple-700 hover:bg-purple-50">
+                        <Link href={proposalHref}>Generate Proposal</Link>
+                      </Button>
+                    </div>
                   </div>
                   )
                 })

@@ -22,12 +22,16 @@ import { logAudit } from "../utils/auditLogger"
 export const listSiteEvaluations = asyncHandler(async (req: AuthenticatedRequest, res: Response) => {
   const userId = req.auth!.userId
   const farmId = req.query.farmId as string | undefined
+  const siteId = req.query.siteId as string | undefined
   const status = req.query.status as string | undefined
   const filter: Record<string, unknown> = {}
   if (needsOwnUserScope(req.user, "evaluations")) {
     filter.userId = userId
   }
   if (farmId) filter.farmId = farmId
+  if (siteId && mongoose.Types.ObjectId.isValid(siteId)) {
+    filter.siteId = new mongoose.Types.ObjectId(siteId)
+  }
   if (status) filter.status = status
   const evaluations = await SiteEvaluation.find(filter)
     .populate("farmId", "name")

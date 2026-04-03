@@ -1,7 +1,8 @@
 "use client"
 
-import { useEffect, useState, useMemo } from "react"
+import { useEffect, useState, useMemo, useCallback } from "react"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
+import { Button } from "@/components/ui/button"
 import {
   BarChart,
   Bar,
@@ -33,15 +34,33 @@ const defaultRoiProjection = [
   { month: 12, polyhouse: 35, shade_net: 40, open_field: 50 },
 ]
 
+type PipelineByMonthRow = { month: string; approved: number; drafted: number; submitted: number }
+
+function normalizePipelineByMonth(raw: unknown): PipelineByMonthRow[] {
+  if (!Array.isArray(raw)) return []
+  return raw.map((row) => {
+    const r = row as Record<string, unknown>
+    const month = typeof r.month === "string" ? r.month : typeof r._id === "string" ? r._id : "—"
+    return {
+      month,
+      approved: typeof r.approved === "number" ? r.approved : 0,
+      drafted: typeof r.drafted === "number" ? r.drafted : typeof r.draft === "number" ? r.draft : 0,
+      submitted: typeof r.submitted === "number" ? r.submitted : 0,
+    }
+  })
+}
+
 function InsightsPageContent() {
-  const [pipeline, setPipeline] = useState<{ byMonth?: { month: string; approved: number; drafted: number; submitted: number }[] } | null>(null)
-  const [siteRankingData, setSiteRankingData] = useState<{ siteName?: string; score?: number; roiMonths?: number | null; infrastructureType?: string | null }[]>([])
+  const [pipeline, setPipeline] = useState<{ byMonth?: PipelineByMonthRow[] } | null>(null)
+  const [siteRankingData, setSiteRankingData] = useState<
+    { siteId?: string; siteName?: string; score?: number; roiMonths?: number | null; infrastructureType?: string | null }[]
+  >([])
   const [roiDistribution, setRoiDistribution] = useState<{ month: number; polyhouse: number; shade_net: number; open_field: number }[]>([])
   const [pipelineValue, setPipelineValue] = useState<number>(0)
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
 
-  const loadData = () => {
+  const loadData = useCallback(() => {
     setError(null)
     setLoading(true)
     let cancelled = false
@@ -53,27 +72,45 @@ function InsightsPageContent() {
       .then(([pRes, rRes, roiRes]) => {
         if (cancelled) return
         if (pRes?.data) {
-          setPipeline({ byMonth: pRes.data.byMonth ?? undefined })
-          setPipelineValue(pRes.data.totalPipelineValue ?? 0)
+          const byMonth = normalizePipelineByMonth(pRes.data.byMonth)
+          setPipeline(byMonth.length ? { byMonth } : { byMonth: undefined })
+          setPipelineValue(
+            typeof pRes.data.totalPipelineValue === "number" ? pRes.data.totalPipelineValue : 0
+          )
+        } else {
+          setPipeline(null)
+          setPipelineValue(0)
         }
         if (Array.isArray(rRes?.data)) {
           setSiteRankingData(
             rRes.data.map((s) => ({
-              siteName: s.siteName ?? `Site ${String(s.siteId).slice(-6)}`,
-              score: s.score ?? 0,
+              siteId: s.siteId,
+              siteName: s.siteName ?? s.name ?? `Site ${String(s.siteId).slice(-6)}`,
+              score: typeof s.score === "number" ? s.score : 0,
               roiMonths: s.roiMonths,
               infrastructureType: s.infrastructureType,
             }))
           )
+        } else {
+          setSiteRankingData([])
         }
         if (Array.isArray(roiRes?.data)) {
-          setRoiDistribution(roiRes.data)
+          setRoiDistribution(
+            roiRes.data.map((r) => ({
+              month: typeof r.month === "number" ? r.month : 0,
+              polyhouse: typeof r.polyhouse === "number" ? r.polyhouse : 0,
+              shade_net: typeof r.shade_net === "number" ? r.shade_net : 0,
+              open_field: typeof r.open_field === "number" ? r.open_field : 0,
+            }))
+          )
+        } else {
+          setRoiDistribution([])
         }
       })
       .catch((err) => {
         if (!cancelled) {
           setError(err instanceof Error ? err.message : "Failed to load insights")
-          console.error("Data load error:", err)
+          console.error("Insights load error:", err)
         }
       })
       .finally(() => {
@@ -82,16 +119,25 @@ function InsightsPageContent() {
     return () => {
       cancelled = true
     }
-  }
+  }, [])
 
   useEffect(() => {
     const cleanup = loadData()
-    return () => cleanup?.()
-  }, [])
+    return () => {
+      cleanup?.()
+    }
+  }, [loadData])
 
   const pipelineChartData = useMemo(() => {
-    if (pipeline?.byMonth?.length) return pipeline.byMonth
-    return defaultByMonth
+    const rows = pipeline?.byMonth?.length ? pipeline.byMonth : defaultByMonth
+    return rows.map((row) => {
+      let monthLabel = row.month
+      if (/^\d{4}-\d{2}$/.test(row.month)) {
+        const [y, m] = row.month.split("-").map(Number)
+        monthLabel = new Date(y, m - 1, 1).toLocaleDateString("en-IN", { month: "short", year: "2-digit" })
+      }
+      return { ...row, month: monthLabel }
+    })
   }, [pipeline])
 
   const roiChartData = useMemo(() => {
@@ -114,6 +160,7 @@ function InsightsPageContent() {
   const siteRanking = useMemo(() => {
     if (siteRankingData.length) {
       return siteRankingData.map((s) => ({
+        siteId: s.siteId,
         siteName: s.siteName ?? "Unnamed Site",
         score: s.score ?? 0,
         infrastructureType: s.infrastructureType ? String(s.infrastructureType).replace(/_/g, " ") : null,
@@ -121,10 +168,10 @@ function InsightsPageContent() {
       }))
     }
     return [
-      { siteName: "Hosahalli Farm", score: 92, infrastructureType: "Polyhouse", roiMonths: 18 },
-      { siteName: "Kodigenahalli", score: 88, infrastructureType: "Polyhouse", roiMonths: 20 },
-      { siteName: "Mudugere Farm", score: 82, infrastructureType: "Shade Net", roiMonths: 6 },
-      { siteName: "Chikka Soluru", score: 75, infrastructureType: "Open Field", roiMonths: 3 },
+      { siteId: "demo-1", siteName: "Hosahalli Farm", score: 92, infrastructureType: "Polyhouse", roiMonths: 18 },
+      { siteId: "demo-2", siteName: "Kodigenahalli", score: 88, infrastructureType: "Polyhouse", roiMonths: 20 },
+      { siteId: "demo-3", siteName: "Mudugere Farm", score: 82, infrastructureType: "Shade Net", roiMonths: 6 },
+      { siteId: "demo-4", siteName: "Chikka Soluru", score: 75, infrastructureType: "Open Field", roiMonths: 3 },
     ]
   }, [siteRankingData])
 
@@ -136,25 +183,19 @@ function InsightsPageContent() {
   const noRealInsights =
     !loading && !error && !hasBackendPipeline && !hasBackendRoi && !hasBackendRanking
 
-  return (
-    <div className="space-y-6">
-      <div>
-        <h1 className="text-3xl font-bold tracking-tight">Insights</h1>
-        <p className="text-muted-foreground">
-          Market analysis and predictive insights for site evaluation strategy
-        </p>
-      </div>
+  const pageHeader = (
+    <div>
+      <h1 className="text-3xl font-bold tracking-tight">Insights</h1>
+      <p className="text-muted-foreground">
+        Market analysis and predictive insights for site evaluation strategy
+      </p>
+    </div>
+  )
 
-      {error && (
-        <div className="bg-red-50 border border-red-200 rounded p-3 mb-4 text-sm text-red-700">
-          {error} —{" "}
-          <button onClick={loadData} className="underline">
-            Retry
-          </button>
-        </div>
-      )}
-
-      {loading && (
+  if (loading) {
+    return (
+      <div className="space-y-6">
+        {pageHeader}
         <div className="space-y-6">
           <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
             {[1, 2, 3, 4].map((i) => (
@@ -190,9 +231,36 @@ function InsightsPageContent() {
             </Card>
           </div>
         </div>
-      )}
+      </div>
+    )
+  }
 
-      {!loading && (
+  if (error) {
+    return (
+      <div className="space-y-6">
+        {pageHeader}
+        <Card className="max-w-lg border-destructive/30">
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2 text-destructive text-lg">
+              <AlertCircle className="h-5 w-5 shrink-0" />
+              Failed to load insights
+            </CardTitle>
+            <CardDescription>{error}</CardDescription>
+          </CardHeader>
+          <CardContent>
+            <Button className="bg-[#387F43] hover:bg-[#2d6535]" onClick={() => void loadData()}>
+              Retry
+            </Button>
+          </CardContent>
+        </Card>
+      </div>
+    )
+  }
+
+  return (
+    <div className="space-y-6">
+      {pageHeader}
+
       <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
         <Card className="border-l-4 border-l-[#387F43]">
           <CardHeader className="pb-2">
@@ -237,7 +305,6 @@ function InsightsPageContent() {
           </CardContent>
         </Card>
       </div>
-      )}
 
       {noRealInsights ? (
         <div className="flex flex-col items-center justify-center py-16 px-4 text-center rounded-xl border border-dashed border-muted-foreground/20 bg-muted/20">
@@ -247,7 +314,7 @@ function InsightsPageContent() {
             Insights will appear here once you have evaluations, proposals, and pipeline activity in the system.
           </p>
         </div>
-      ) : !loading ? (
+      ) : (
       <>
       <div className="grid gap-6 lg:grid-cols-2">
         <Card>
@@ -303,8 +370,8 @@ function InsightsPageContent() {
         </CardHeader>
         <CardContent>
           <div className="space-y-3">
-            {siteRanking.map((item, idx) => (
-              <div key={idx} className="p-4 border rounded-lg hover:bg-gray-50">
+            {siteRanking.map((item) => (
+              <div key={item.siteId ?? item.siteName} className="p-4 border rounded-lg hover:bg-gray-50">
                 <div className="flex items-start justify-between mb-3">
                   <div>
                     <div className="flex items-center gap-2 flex-wrap">
@@ -374,7 +441,7 @@ function InsightsPageContent() {
         </CardContent>
       </Card>
       </>
-      ) : null}
+      )}
     </div>
   )
 }

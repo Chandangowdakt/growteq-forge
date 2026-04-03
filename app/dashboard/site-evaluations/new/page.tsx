@@ -35,6 +35,10 @@ interface SiteData {
 const baseURL =
   (typeof process !== "undefined" && process.env.NEXT_PUBLIC_API_URL) || "http://localhost:5000"
 
+function clampSlopePercent(n: number): number {
+  return Math.min(100, Math.max(0, Math.round(n)))
+}
+
 export default function NewSiteEvaluationPage() {
   const searchParams = useSearchParams()
 
@@ -52,7 +56,7 @@ export default function NewSiteEvaluationPage() {
   const [cropType, setCropType] = useState<string>("Tomato")
   const [soilType, setSoilType] = useState<string>("Loamy")
   const [waterAvailability, setWaterAvailability] = useState<string>("Borewell")
-  const [slope, setSlope] = useState<string>("2.5")
+  const [slope, setSlope] = useState<string>(String(clampSlopePercent(2.5)))
   const [notes, setNotes] = useState<string>("")
 
   useEffect(() => {
@@ -93,10 +97,10 @@ export default function NewSiteEvaluationPage() {
       const data = json?.data as SiteData | undefined
       if (!data) throw new Error("Site not found")
       setSite(data)
-      if (typeof data.slope === "number") {
-        setSlope(String(data.slope))
+      if (typeof data.slope === "number" && Number.isFinite(data.slope)) {
+        setSlope(String(clampSlopePercent(data.slope)))
       } else {
-        setSlope("2.5")
+        setSlope(String(clampSlopePercent(2.5)))
       }
     } catch (err) {
       console.error(err)
@@ -145,7 +149,7 @@ export default function NewSiteEvaluationPage() {
 
     setSubmitting(true)
     try {
-      const slopeValue = Number(slope)
+      const slopeValue = clampSlopePercent(Number(slope))
       const units = Math.max(1, numberOfUnits || 0)
 
       const res = await siteEvaluationsApi.create({
@@ -179,6 +183,36 @@ export default function NewSiteEvaluationPage() {
     } finally {
       setSubmitting(false)
     }
+  }
+
+  const handleSlopeChange = (value: string) => {
+    const t = value.trim()
+    if (t === "") {
+      setSlope("")
+      return
+    }
+    if (t === "-" || t === ".") {
+      setSlope(t)
+      return
+    }
+    const n = parseFloat(t)
+    if (Number.isNaN(n)) {
+      setSlope(t)
+      return
+    }
+    if (t.endsWith(".")) {
+      setSlope(t)
+      return
+    }
+    setSlope(String(clampSlopePercent(n)))
+  }
+
+  const handleSlopeBlur = (value: string) => {
+    const t = value.trim()
+    if (t === "" || t === "-" || t === ".") return
+    const n = parseFloat(t)
+    if (Number.isNaN(n)) return
+    setSlope(String(clampSlopePercent(n)))
   }
 
   const infraLabel = (key: InfrastructureKey) => {
@@ -357,8 +391,11 @@ export default function NewSiteEvaluationPage() {
                     type="number"
                     min={0}
                     max={100}
+                    step={1}
+                    placeholder="Slope %"
                     value={slope}
-                    onChange={(e) => setSlope(e.target.value)}
+                    onChange={(e) => handleSlopeChange(e.target.value)}
+                    onBlur={(e) => handleSlopeBlur(e.target.value)}
                   />
                 </div>
               </div>

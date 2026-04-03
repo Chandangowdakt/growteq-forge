@@ -27,14 +27,23 @@ export const getWorkInProgress = asyncHandler(async (req: AuthenticatedRequest, 
   )
 
   const data = evaluations.map((e) => {
-    const farm = e.farmId as { name?: string } | null
-    const site = e.siteId as { name?: string; area?: number; geojson?: { coordinates?: unknown[] } } | null
+    const farm = e.farmId as { _id?: unknown; name?: string } | null
+    const site = e.siteId as {
+      _id?: unknown
+      name?: string
+      area?: number
+      geojson?: { coordinates?: unknown[] }
+    } | null
     let boundaryPointCount = 0
     if (site?.geojson && Array.isArray((site.geojson as { coordinates?: unknown[] }).coordinates?.[0])) {
       boundaryPointCount = (site.geojson as { coordinates: unknown[][] }).coordinates[0].length
     }
+    const farmIdStr = farm?._id != null ? String(farm._id) : e.farmId != null ? String(e.farmId) : ""
+    const siteIdStr = site?._id != null ? String(site._id) : e.siteId != null ? String(e.siteId) : ""
     return {
       _id: e._id,
+      farmId: farmIdStr || undefined,
+      siteId: siteIdStr || undefined,
       farmName: farm?.name ?? "Farm",
       siteName: site?.name ?? "Site",
       area: site?.area ?? 0,

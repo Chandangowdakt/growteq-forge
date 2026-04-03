@@ -4,7 +4,15 @@ import { useState, useEffect, useMemo } from "react"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { FileText, Download, MapPin, Inbox } from "lucide-react"
-import { reportsApi, type ReportTypeItem, type ReportFileRow } from "@/lib/api"
+import {
+  api,
+  reportsApi,
+  siteEvaluationsApi,
+  type ReportTypeItem,
+  type ReportFileRow,
+  type SiteEvaluation,
+  ApiError,
+} from "@/lib/api"
 import { Skeleton } from "@/components/ui/skeleton"
 import { hasPermission } from "@/lib/permissions"
 import { useAuth } from "@/app/context/auth-context"
@@ -31,8 +39,173 @@ function ReportsPageContent() {
   const [error, setError] = useState<string | null>(null)
   const [fileHistory, setFileHistory] = useState<ReportFileRow[]>([])
   const [filesLoading, setFilesLoading] = useState(true)
+  const [quickBusy, setQuickBusy] = useState<"single" | "multi" | "map" | "csv" | null>(null)
 
   const canGenerate = hasPermission(user, "canGenerateReports")
+
+  const siteIdFromEvaluation = (ev: SiteEvaluation): string | null => {
+    const s = ev.siteId
+    if (!s) return null
+    if (typeof s === "string") return s
+    if (typeof s === "object" && s !== null && "_id" in s) {
+      const id = (s as { _id?: string })._id
+      return typeof id === "string" ? id : null
+    }
+    return null
+  }
+
+  const downloadBlobFile = (blob: Blob, filename: string) => {
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement("a")
+    a.href = url
+    a.download = filename
+    document.body.appendChild(a)
+    a.click()
+    a.remove()
+    URL.revokeObjectURL(url)
+  }
+
+  const parseBlobErrorMessage = async (data: Blob): Promise<string> => {
+    try {
+      const t = await data.text()
+      const j = JSON.parse(t) as { error?: string; message?: string }
+      return j.error || j.message || "Request failed"
+    } catch {
+      return "Request failed"
+    }
+  }
+
+  const handleQuickSingleSite = async () => {
+    setQuickBusy("single")
+    try {
+      const listRes = await siteEvaluationsApi.list()
+      const evals = listRes.success && Array.isArray(listRes.data) ? listRes.data : []
+      const siteId = evals.map(siteIdFromEvaluation).find((id): id is string => id != null)
+      if (!siteId) {
+        toast({
+          title: "No evaluation found",
+          description: "Create and complete a site evaluation first.",
+          variant: "destructive",
+        })
+        return
+      }
+      const res = await api.get(`/api/reports/site-evaluation/${encodeURIComponent(siteId)}`, {
+        responseType: "blob",
+      })
+      const blob = res.data as Blob
+      const ct = (res.headers["content-type"] || "").toLowerCase()
+      if (!ct.includes("application/pdf")) {
+        throw new Error(await parseBlobErrorMessage(blob))
+      }
+      downloadBlobFile(blob, "single-site-evaluation.pdf")
+      toast({ title: "Download started", description: "Site evaluation PDF" })
+    } catch (e) {
+      let description = "Could not generate the report. Try again after completing an evaluation."
+      if (e instanceof ApiError && e.statusCode === 404 && e.data instanceof Blob) {
+        try {
+          description = await parseBlobErrorMessage(e.data)
+        } catch {
+          description = "No evaluation found for this site."
+        }
+      } else if (e instanceof Error && e.message) {
+        description = e.message
+      }
+      toast({ title: "Single-site report failed", description, variant: "destructive" })
+    } finally {
+      setQuickBusy(null)
+    }
+  }
+
+  const handleQuickMultiSite = async () => {
+    setQuickBusy("multi")
+    try {
+      const listRes = await siteEvaluationsApi.list()
+      const evals = listRes.success && Array.isArray(listRes.data) ? listRes.data : []
+      const seen = new Set<string>()
+      const siteIds: string[] = []
+      for (const ev of evals) {
+        const sid = siteIdFromEvaluation(ev)
+        if (sid && !seen.has(sid)) {
+          seen.add(sid)
+          siteIds.push(sid)
+          if (siteIds.length >= 40) break
+        }
+      }
+      if (siteIds.length === 0) {
+        toast({
+          title: "No sites to include",
+          description: "Add evaluations for at least one site first.",
+          variant: "destructive",
+        })
+        return
+      }
+      const blob = await reportsApi.downloadMultiSitePdf(siteIds)
+      if ((blob.type || "").toLowerCase().includes("json")) {
+        throw new Error(await parseBlobErrorMessage(blob))
+      }
+      downloadBlobFile(blob, "multi-site-evaluation-summary.pdf")
+      toast({ title: "Download started", description: "Multi-site summary PDF" })
+    } catch (e) {
+      let description = "Could not generate the multi-site report."
+      if (e instanceof ApiError && e.data instanceof Blob) {
+        description = await parseBlobErrorMessage(e.data)
+      } else if (e instanceof Error && e.message) {
+        description = e.message
+      }
+      toast({ title: "Multi-site report failed", description, variant: "destructive" })
+    } finally {
+      setQuickBusy(null)
+    }
+  }
+
+  const handleQuickExportMap = async () => {
+    setQuickBusy("map")
+    try {
+      const res = await reportsApi.exportMapData()
+      if (!res.success || !Array.isArray(res.data)) {
+        throw new Error("Invalid response from server")
+      }
+      const blob = new Blob([JSON.stringify({ success: true, data: res.data }, null, 2)], {
+        type: "application/json",
+      })
+      downloadBlobFile(blob, "growteq-map-sites-export.json")
+      toast({
+        title: "Download started",
+        description: `${res.data.length} site(s) with boundaries exported`,
+      })
+    } catch (e) {
+      toast({
+        title: "Map export failed",
+        description: e instanceof Error ? e.message : "Please try again.",
+        variant: "destructive",
+      })
+    } finally {
+      setQuickBusy(null)
+    }
+  }
+
+  const handleQuickDataTable = async () => {
+    setQuickBusy("csv")
+    try {
+      const blob = await reportsApi.downloadEvaluationsCsv()
+      const ct = (blob.type || "").toLowerCase()
+      if (ct.includes("json") || ct.includes("application/problem")) {
+        throw new Error(await parseBlobErrorMessage(blob))
+      }
+      downloadBlobFile(blob, "growteq-evaluations-export.csv")
+      toast({ title: "Download started", description: "Evaluations CSV" })
+    } catch (e) {
+      let description = "Export failed."
+      if (e instanceof ApiError && e.data instanceof Blob) {
+        description = await parseBlobErrorMessage(e.data)
+      } else if (e instanceof Error && e.message) {
+        description = e.message
+      }
+      toast({ title: "Data export failed", description, variant: "destructive" })
+    } finally {
+      setQuickBusy(null)
+    }
+  }
 
   const loadFileHistory = () => {
     setFilesLoading(true)
@@ -296,6 +469,64 @@ function ReportsPageContent() {
 
       <Card>
         <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <MapPin className="h-5 w-5 text-[#387F43]" />
+            Quick Report Generator
+          </CardTitle>
+          <CardDescription>Customize and generate reports on demand</CardDescription>
+        </CardHeader>
+        <CardContent>
+          <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
+            <Button
+              variant="outline"
+              className="h-auto py-6 flex flex-col items-start justify-start bg-transparent"
+              disabled={!canGenerate || quickBusy !== null}
+              onClick={() => void handleQuickSingleSite()}
+            >
+              <span className="text-sm font-medium mb-1">
+                {quickBusy === "single" ? "Generating…" : "Single Site"}
+              </span>
+              <span className="text-xs text-muted-foreground">Latest evaluated site PDF</span>
+            </Button>
+            <Button
+              variant="outline"
+              className="h-auto py-6 flex flex-col items-start justify-start bg-transparent"
+              disabled={!canGenerate || quickBusy !== null}
+              onClick={() => void handleQuickMultiSite()}
+            >
+              <span className="text-sm font-medium mb-1">
+                {quickBusy === "multi" ? "Generating…" : "Multiple Sites"}
+              </span>
+              <span className="text-xs text-muted-foreground">Summary PDF (up to 40 sites)</span>
+            </Button>
+            <Button
+              variant="outline"
+              className="h-auto py-6 flex flex-col items-start justify-start bg-transparent"
+              disabled={!canGenerate || quickBusy !== null}
+              onClick={() => void handleQuickExportMap()}
+            >
+              <span className="text-sm font-medium mb-1">
+                {quickBusy === "map" ? "Exporting…" : "Export Map"}
+              </span>
+              <span className="text-xs text-muted-foreground">Sites + GeoJSON as JSON file</span>
+            </Button>
+            <Button
+              variant="outline"
+              className="h-auto py-6 flex flex-col items-start justify-start bg-transparent"
+              disabled={!canGenerate || quickBusy !== null}
+              onClick={() => void handleQuickDataTable()}
+            >
+              <span className="text-sm font-medium mb-1">
+                {quickBusy === "csv" ? "Exporting…" : "Data Table"}
+              </span>
+              <span className="text-xs text-muted-foreground">Evaluations as CSV</span>
+            </Button>
+          </div>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
           <CardTitle className="text-lg">Report History</CardTitle>
           <CardDescription>All generated files on the server — download without regenerating</CardDescription>
         </CardHeader>
@@ -364,52 +595,6 @@ function ReportsPageContent() {
               ))}
             </div>
           )}
-        </CardContent>
-      </Card>
-
-      <Card>
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2">
-            <MapPin className="h-5 w-5 text-[#387F43]" />
-            Quick Report Generator
-          </CardTitle>
-          <CardDescription>Customize and generate reports on demand</CardDescription>
-        </CardHeader>
-        <CardContent>
-          <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
-            <Button
-              variant="outline"
-              className="h-auto py-6 flex flex-col items-start justify-start bg-transparent"
-              disabled={!canGenerate}
-            >
-              <span className="text-sm font-medium mb-1">Single Site</span>
-              <span className="text-xs text-muted-foreground">Generate for one site</span>
-            </Button>
-            <Button
-              variant="outline"
-              className="h-auto py-6 flex flex-col items-start justify-start bg-transparent"
-              disabled={!canGenerate}
-            >
-              <span className="text-sm font-medium mb-1">Multiple Sites</span>
-              <span className="text-xs text-muted-foreground">Compare all evaluations</span>
-            </Button>
-            <Button
-              variant="outline"
-              className="h-auto py-6 flex flex-col items-start justify-start bg-transparent"
-              disabled={!canGenerate}
-            >
-              <span className="text-sm font-medium mb-1">Export Map</span>
-              <span className="text-xs text-muted-foreground">Map with boundaries</span>
-            </Button>
-            <Button
-              variant="outline"
-              className="h-auto py-6 flex flex-col items-start justify-start bg-transparent"
-              disabled={!canGenerate}
-            >
-              <span className="text-sm font-medium mb-1">Data Table</span>
-              <span className="text-xs text-muted-foreground">Raw data in Excel</span>
-            </Button>
-          </div>
         </CardContent>
       </Card>
     </div>

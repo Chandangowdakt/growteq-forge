@@ -1,12 +1,11 @@
 "use client"
 
-import { useState, useEffect, useCallback } from "react"
+import { useState, useEffect, useCallback, type ReactNode } from "react"
 import { useParams, useRouter } from "next/navigation"
 import Link from "next/link"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
-import { Badge } from "@/components/ui/badge"
 import {
   Select,
   SelectContent,
@@ -56,6 +55,30 @@ function toRecommendationSelectLabel(s: string | undefined): string {
   if (k === "shade_net") return "Shade Net"
   if (k === "open_field") return "Open Field"
   return s ?? ""
+}
+
+function statusPillClass(status: string): string {
+  switch (status) {
+    case "approved":
+      return "bg-green-100 text-green-800 ring-1 ring-green-200/60"
+    case "submitted":
+      return "bg-blue-100 text-blue-800 ring-1 ring-blue-200/60"
+    case "draft":
+      return "bg-gray-100 text-gray-700 ring-1 ring-gray-200/80"
+    case "rejected":
+      return "bg-red-100 text-red-800 ring-1 ring-red-200/60"
+    default:
+      return "bg-gray-100 text-gray-600 ring-1 ring-gray-200/80"
+  }
+}
+
+function KvRow({ label, children }: { label: string; children: ReactNode }) {
+  return (
+    <div className="min-w-0">
+      <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">{label}</p>
+      <p className="mt-1 text-sm font-medium text-foreground break-words">{children}</p>
+    </div>
+  )
 }
 
 export default function SiteEvaluationDetailPage() {
@@ -389,13 +412,27 @@ export default function SiteEvaluationDetailPage() {
     )
   }
 
-  const statusBadge =
-    evaluation.status === "submitted"
-      ? "bg-green-100 text-green-800"
-      : "bg-orange-100 text-orange-800"
+  const sitePop =
+    evaluation.siteId && typeof evaluation.siteId === "object" && "name" in evaluation.siteId
+      ? (evaluation.siteId as { name?: string })
+      : null
+  const farmPop =
+    evaluation.farmId && typeof evaluation.farmId === "object" && "name" in evaluation.farmId
+      ? (evaluation.farmId as { name?: string })
+      : null
+  const farmSiteLine = [farmPop?.name, sitePop?.name].filter(Boolean).join(" • ")
+
+  const slopeDisplay =
+    slope !== ""
+      ? slope
+      : (evaluation as { slopePercentage?: number }).slopePercentage != null
+        ? String((evaluation as { slopePercentage: number }).slopePercentage)
+        : (evaluation as { slope?: number }).slope != null
+          ? String((evaluation as { slope: number }).slope)
+          : "—"
 
   return (
-    <div className="space-y-6">
+    <div className="max-w-4xl mx-auto px-4 py-6 sm:px-6 space-y-8">
       <Link
         href="/dashboard/farms"
         className="inline-flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground"
@@ -404,46 +441,65 @@ export default function SiteEvaluationDetailPage() {
         Back to Farms
       </Link>
 
-      <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-        <div>
-          <h1 className="text-3xl font-bold tracking-tight">Site Evaluation</h1>
-          <p className="text-muted-foreground">Edit details and submit</p>
+      <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between border-b border-border pb-6">
+        <div className="min-w-0 space-y-1">
+          <h1 className="text-2xl font-bold tracking-tight text-foreground">{evaluation.name}</h1>
+          {farmSiteLine ? (
+            <p className="text-sm text-muted-foreground">{farmSiteLine}</p>
+          ) : (
+            <p className="text-sm text-muted-foreground">Site evaluation</p>
+          )}
         </div>
-        <Badge className={`w-fit ${statusBadge}`}>{evaluation.status}</Badge>
+        <span
+          className={`inline-flex w-fit shrink-0 items-center rounded-full px-3 py-1 text-sm font-medium capitalize ${statusPillClass(evaluation.status)}`}
+        >
+          {evaluation.status}
+        </span>
       </div>
 
-      <Card>
-        <CardHeader>
-          <CardTitle className="text-lg">{evaluation.name}</CardTitle>
-          <CardDescription>
-            Area: {evaluation.area} acres • Status: {evaluation.status}
-          </CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-6">
-          <div className="grid gap-4 sm:grid-cols-2">
-            <div className="space-y-2">
-              <Label>Name</Label>
-              <p className="text-sm font-medium">{evaluation.name}</p>
-            </div>
-            <div className="space-y-2">
-              <Label>Area (acres)</Label>
-              <p className="text-sm font-medium">{evaluation.area}</p>
-            </div>
-            <div className="space-y-2">
-              <Label>Current status</Label>
-              <Badge className={statusBadge}>{evaluation.status}</Badge>
-            </div>
+      {/* Evaluation data */}
+      <section className="space-y-3">
+        <h2 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+          Evaluation data
+        </h2>
+        <div className="rounded-lg border bg-card p-6 shadow-sm">
+          <div className="grid grid-cols-1 gap-5 sm:grid-cols-2">
+            <KvRow label="Name">{evaluation.name ?? "—"}</KvRow>
+            <KvRow label="Area">
+              {evaluation.area != null ? `${evaluation.area} acres` : "—"}
+            </KvRow>
+            <KvRow label="Soil type">{evaluation.soilType ?? "—"}</KvRow>
+            <KvRow label="Water availability">{evaluation.waterAvailability ?? "—"}</KvRow>
+            <KvRow label="Sun exposure">{evaluation.sunExposure ?? "—"}</KvRow>
+            <KvRow label="Slope %">{slopeDisplay}</KvRow>
+            {(evaluation as { elevationMeters?: number }).elevationMeters != null && (
+              <KvRow label="Elevation (m)">
+                {String((evaluation as { elevationMeters: number }).elevationMeters)}
+              </KvRow>
+            )}
+            {evaluation.cropType ? <KvRow label="Crop">{evaluation.cropType}</KvRow> : null}
+            {typeof evaluation.numberOfUnits === "number" && evaluation.numberOfUnits > 1 ? (
+              <KvRow label="Units">{evaluation.numberOfUnits}</KvRow>
+            ) : null}
           </div>
+        </div>
+      </section>
 
-          <div className="grid gap-4 sm:grid-cols-2">
+      {/* Infrastructure */}
+      <section className="space-y-3 border-t border-border pt-8">
+        <h2 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+          Infrastructure
+        </h2>
+        <div className="rounded-lg border bg-card p-6 shadow-sm space-y-5">
+          <div className="grid gap-5 sm:grid-cols-2">
             <div className="space-y-2">
-              <Label htmlFor="slope">Slope</Label>
+              <Label htmlFor="slope">Slope (%)</Label>
               <Input
                 id="slope"
                 type="number"
                 value={slope}
                 onChange={(e) => setSlope(e.target.value)}
-                placeholder="Slope"
+                placeholder="Slope %"
               />
             </div>
             <div className="space-y-2">
@@ -465,91 +521,90 @@ export default function SiteEvaluationDetailPage() {
               </Select>
             </div>
           </div>
+        </div>
+      </section>
 
-          <div className="space-y-2">
-            <Label>Cost estimate</Label>
-            <p className="text-sm font-medium">
-              {costEstimate != null
-                ? `₹${costEstimate.toLocaleString()}`
-                : "—"}
+      {/* Cost */}
+      <section className="space-y-3 border-t border-border pt-8">
+        <h2 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Cost</h2>
+        <div className="rounded-lg border bg-card p-6 shadow-sm space-y-4">
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+            <KvRow label="Cost estimate">
+              {costEstimate != null ? `₹${costEstimate.toLocaleString("en-IN")}` : "—"}
+            </KvRow>
+          </div>
+          {evaluation.infrastructureSnapshot && (
+            <p className="text-xs text-muted-foreground border-t border-border pt-4">
+              From evaluation snapshot: ₹
+              {Math.round(
+                (evaluation.infrastructureSnapshot.minCost + evaluation.infrastructureSnapshot.maxCost) / 2
+              ).toLocaleString("en-IN")}{" "}
+              /acre (avg) • ROI: {evaluation.infrastructureSnapshot.roiMonths} months
+              {typeof evaluation.numberOfUnits === "number" && evaluation.numberOfUnits > 1
+                ? ` • ${evaluation.numberOfUnits} units`
+                : ""}
             </p>
-            {evaluation.infrastructureSnapshot && (
-              <p className="text-xs text-muted-foreground">
-                From evaluation snapshot: ₹
-                {Math.round(
-                  (evaluation.infrastructureSnapshot.minCost +
-                    evaluation.infrastructureSnapshot.maxCost) /
-                    2
-                ).toLocaleString("en-IN")}{" "}
-                /acre (avg) • ROI: {evaluation.infrastructureSnapshot.roiMonths} months
-                {typeof evaluation.numberOfUnits === "number" && evaluation.numberOfUnits > 1
-                  ? ` • ${evaluation.numberOfUnits} units`
-                  : ""}
-              </p>
-            )}
-            {recommendationLoading && (
-              <p className="text-xs text-muted-foreground">Loading recommendation…</p>
-            )}
-            {!recommendationLoading && recommendationError && (
-              <p className="text-xs text-red-600">
-                Failed to load recommendation: {recommendationError}
-              </p>
-            )}
-            {!recommendationLoading && !recommendationError && recommendedType && (
-              <p className="text-xs text-muted-foreground">
-                Recommended: <span className="font-medium">{recommendedType}</span>
-                {feasibilityScore != null && (
-                  <> • Feasibility score: {feasibilityScore.toFixed(1)}%</>
-                )}
-              </p>
-            )}
-            {!costLoading && backendCost && (
-              <p className="text-xs text-muted-foreground">
-                Backend cost: {backendCost.infrastructureType} • ₹
-                {backendCost.costPerAcre.toLocaleString("en-IN")} /acre • Final: ₹
-                {backendCost.finalInvestment.toLocaleString("en-IN")} • Annual profit: ₹
-                {backendCost.annualProfit.toLocaleString("en-IN")} • ROI:{" "}
-                {backendCost.roiMonths.toFixed(1)} months
-              </p>
-            )}
-            {costLoading && (
-              <p className="text-xs text-muted-foreground">Loading cost details…</p>
-            )}
-            {!costLoading && costError && (
-              <p className="text-xs text-red-600">
-                Failed to load cost details: {costError}
-              </p>
-            )}
-          </div>
+          )}
+          {recommendationLoading && (
+            <p className="text-xs text-muted-foreground">Loading recommendation…</p>
+          )}
+          {!recommendationLoading && recommendationError && (
+            <p className="text-xs text-red-600">Failed to load recommendation: {recommendationError}</p>
+          )}
+          {!recommendationLoading && !recommendationError && recommendedType && (
+            <p className="text-xs text-muted-foreground">
+              Recommended: <span className="font-medium">{recommendedType}</span>
+              {feasibilityScore != null && (
+                <> • Feasibility score: {feasibilityScore.toFixed(1)}%</>
+              )}
+            </p>
+          )}
+          {!costLoading && backendCost && (
+            <p className="text-xs text-muted-foreground">
+              Backend cost: {backendCost.infrastructureType} • ₹
+              {backendCost.costPerAcre.toLocaleString("en-IN")} /acre • Final: ₹
+              {backendCost.finalInvestment.toLocaleString("en-IN")} • Annual profit: ₹
+              {backendCost.annualProfit.toLocaleString("en-IN")} • ROI: {backendCost.roiMonths.toFixed(1)}{" "}
+              months
+            </p>
+          )}
+          {costLoading && <p className="text-xs text-muted-foreground">Loading cost details…</p>}
+          {!costLoading && costError && (
+            <p className="text-xs text-red-600">Failed to load cost details: {costError}</p>
+          )}
+        </div>
+      </section>
 
-          <div className="flex flex-wrap gap-2 pt-2">
+      {/* Actions */}
+      <section className="space-y-3 border-t border-border pt-8">
+        <h2 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Actions</h2>
+        <div className="flex flex-wrap gap-2">
+          <Button
+            className="bg-green-600 text-white hover:bg-green-700"
+            onClick={handleSaveDraft}
+            disabled={saving || evaluation.status === "submitted"}
+          >
+            {saving ? "Saving…" : "Save Draft"}
+          </Button>
+          <Button
+            className="bg-green-600 text-white hover:bg-green-700"
+            onClick={handleSubmit}
+            disabled={saving || evaluation.status === "submitted"}
+          >
+            {saving ? "Submitting…" : "Submit Evaluation"}
+          </Button>
+          {evaluation.status === "submitted" && (
             <Button
-              className="bg-[#387F43] hover:bg-[#2d6535]"
-              onClick={handleSaveDraft}
-              disabled={saving || evaluation.status === "submitted"}
+              className="bg-green-600 text-white hover:bg-green-700"
+              onClick={handleDownloadPdf}
+              disabled={downloadingPdf}
             >
-              {saving ? "Saving…" : "Save Draft"}
+              <FileDown className="h-4 w-4 mr-2" />
+              {downloadingPdf ? "Downloading…" : "Download Proposal PDF"}
             </Button>
-            <Button
-              variant="outline"
-              onClick={handleSubmit}
-              disabled={saving || evaluation.status === "submitted"}
-            >
-              {saving ? "Submitting…" : "Submit Evaluation"}
-            </Button>
-            {evaluation.status === "submitted" && (
-              <Button
-                className="bg-[#387F43] hover:bg-[#2d6535]"
-                onClick={handleDownloadPdf}
-                disabled={downloadingPdf}
-              >
-                <FileDown className="h-4 w-4 mr-2" />
-                {downloadingPdf ? "Downloading…" : "Download Proposal PDF"}
-              </Button>
-            )}
-          </div>
-        </CardContent>
-      </Card>
+          )}
+        </div>
+      </section>
     </div>
   )
 }

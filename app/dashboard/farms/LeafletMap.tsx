@@ -1,5 +1,5 @@
 "use client"
-import { useState, useEffect, useRef, FormEvent } from "react"
+import { useState, useEffect, useRef, useCallback, FormEvent, type MutableRefObject } from "react"
 import { MapContainer, TileLayer, ScaleControl, ZoomControl, useMapEvents, useMap } from "react-leaflet"
 import type { LatLngExpression } from "leaflet"
 import L from "leaflet"
@@ -15,6 +15,36 @@ L.Icon.Default.mergeOptions({
 
 const DEFAULT_CENTER: LatLngExpression = [12.9716, 77.5946]
 const DEFAULT_ZOOM = 15
+
+type SearchSuggestion = {
+  label: string
+  lat: number
+  lng: number
+  boundingbox?: string[]
+}
+
+/** Build a readable place label from Nominatim `addressdetails=1` (falls back to display_name). */
+function formatNominatimLabel(place: {
+  display_name?: string
+  name?: string
+  address?: Record<string, string | undefined>
+}): string {
+  const a = place.address ?? {}
+  const str = (v: unknown) => (typeof v === "string" && v.trim() ? v.trim() : "")
+  const parts = [
+    str(place.name) || str(a.amenity) || str(a.building) || str(a.road),
+    str(a.village) || str(a.suburb) || str(a.neighbourhood) || str(a.hamlet),
+    str(a.town) || str(a.city) || str(a.county) || str(a.district),
+    str(a.state),
+    str(a.country),
+  ].filter(Boolean)
+  const deduped = parts.filter((p, i) => p !== parts[i - 1])
+  if (deduped.length > 0) return deduped.join(", ")
+  return place.display_name?.trim() || "Unknown"
+}
+
+/** Persist draw-map center/zoom so returning from other pages does not reset the view. */
+const FARMS_DRAW_MAP_VIEW_KEY = "growteq-forge-farms-draw-map-view"
 
 /** Satellite-friendly boundary styling */
 const BOUNDARY_RED_ICON = new L.Icon({
@@ -47,13 +77,21 @@ export interface LeafletMapProps {
   initialBoundary?: BoundaryPoint[]
 }
 
-function FlyToCenter({ center }: { center: { lat: number; lng: number } | null }) {
+function FlyToCenter({
+  center,
+  viewOnceKeyRef,
+}: {
+  center: { lat: number; lng: number } | null
+  viewOnceKeyRef: MutableRefObject<string | null>
+}) {
   const map = useMap()
   useEffect(() => {
-    if (center) {
-      map.setView([center.lat, center.lng], 17, { animate: false })
-    }
-  }, [center?.lat, center?.lng, map])
+    if (!center) return
+    const key = `${center.lat},${center.lng}`
+    if (viewOnceKeyRef.current === key) return
+    viewOnceKeyRef.current = key
+    map.setView([center.lat, center.lng], 17, { animate: false })
+  }, [center?.lat, center?.lng, map, viewOnceKeyRef])
   return null
 }
 
@@ -62,9 +100,19 @@ function ClickHandler({ onSelect }: { onSelect: (lat: number, lng: number) => vo
   return null
 }
 
-function LocationFlyTo({ coords }: { coords: LatLngExpression | null }) {
+function LocationFlyTo({
+  coords,
+  skipFlyRef,
+}: {
+  coords: LatLngExpression | null
+  skipFlyRef: MutableRefObject<boolean>
+}) {
   const map = useMap()
-  useEffect(() => { if (coords) map.flyTo(coords, DEFAULT_ZOOM, { animate: true, duration: 1.5 }) }, [coords, map])
+  useEffect(() => {
+    if (!coords) return
+    if (skipFlyRef.current) return
+    map.flyTo(coords, DEFAULT_ZOOM, { animate: true, duration: 1.5 })
+  }, [coords, map, skipFlyRef])
   return null
 }
 
@@ -84,7 +132,14 @@ function MapResizer({ isFullscreen }: { isFullscreen: boolean }) {
 }
 
 /** Imperative boundary layers — avoids react-leaflet Marker/Polygon sync issues (_leaflet_pos, duplicate layers). */
-function BoundaryLayers({ points }: { points: BoundaryPoint[] }) {
+function BoundaryLayers({
+  points,
+  fitBoundsOnChange,
+}: {
+  points: BoundaryPoint[]
+  /** When false (interactive draw), do not fitBounds on each new point — prevents map jump. */
+  fitBoundsOnChange: boolean
+}) {
   const map = useMap()
   const polygonRef = useRef<L.Polygon | null>(null)
   const markersRef = useRef<L.Marker[]>([])
@@ -120,29 +175,37 @@ function BoundaryLayers({ points }: { points: BoundaryPoint[] }) {
       markersRef.current.push(marker)
     })
 
-    if (points.length >= 3) {
+    if (fitBoundsOnChange) {
+      if (points.length >= 3) {
+        const latlngs = points.map((p) => [p.lat, p.lng] as L.LatLngTuple)
+        const poly = L.polygon(latlngs, PINK_POLYGON_STYLE).addTo(map)
+        poly.on("mouseover", () => poly.setStyle({ weight: 4 }))
+        poly.on("mouseout", () => poly.setStyle(PINK_POLYGON_STYLE))
+        polygonRef.current = poly
+        try {
+          map.fitBounds(poly.getBounds(), { padding: [24, 24], maxZoom: 19, animate: false })
+        } catch {
+          /* invalid bounds */
+        }
+      } else if (points.length >= 2) {
+        const lats = points.map((p) => p.lat)
+        const lngs = points.map((p) => p.lng)
+        const bounds: L.LatLngBoundsExpression = [
+          [Math.min(...lats), Math.min(...lngs)],
+          [Math.max(...lats), Math.max(...lngs)],
+        ]
+        try {
+          map.fitBounds(bounds, { padding: [40, 40], maxZoom: 19, animate: false })
+        } catch {
+          /* ignore */
+        }
+      }
+    } else if (points.length >= 3) {
       const latlngs = points.map((p) => [p.lat, p.lng] as L.LatLngTuple)
       const poly = L.polygon(latlngs, PINK_POLYGON_STYLE).addTo(map)
       poly.on("mouseover", () => poly.setStyle({ weight: 4 }))
       poly.on("mouseout", () => poly.setStyle(PINK_POLYGON_STYLE))
       polygonRef.current = poly
-      try {
-        map.fitBounds(poly.getBounds(), { padding: [24, 24], maxZoom: 19, animate: false })
-      } catch {
-        /* invalid bounds */
-      }
-    } else if (points.length >= 2) {
-      const lats = points.map((p) => p.lat)
-      const lngs = points.map((p) => p.lng)
-      const bounds: L.LatLngBoundsExpression = [
-        [Math.min(...lats), Math.min(...lngs)],
-        [Math.max(...lats), Math.max(...lngs)],
-      ]
-      try {
-        map.fitBounds(bounds, { padding: [40, 40], maxZoom: 19, animate: false })
-      } catch {
-        /* ignore */
-      }
     }
 
     return () => {
@@ -152,7 +215,65 @@ function BoundaryLayers({ points }: { points: BoundaryPoint[] }) {
         /* map may be tearing down */
       }
     }
-  }, [map, coordsSig])
+  }, [map, coordsSig, fitBoundsOnChange])
+
+  return null
+}
+
+/** Restore/save draw-map view (non–read-only only). Runs before LocationFlyTo so geolocation can be skipped when restored. */
+function DrawMapViewSession({
+  readOnly,
+  locating,
+  onRestoredFromSession,
+}: {
+  readOnly?: boolean
+  locating: boolean
+  onRestoredFromSession: () => void
+}) {
+  const map = useMap()
+  const restoredRef = useRef(false)
+
+  useEffect(() => {
+    if (readOnly || locating || restoredRef.current) return
+    try {
+      const raw = sessionStorage.getItem(FARMS_DRAW_MAP_VIEW_KEY)
+      if (!raw) return
+      const o = JSON.parse(raw) as { lat?: number; lng?: number; zoom?: number }
+      if (
+        typeof o.lat === "number" &&
+        typeof o.lng === "number" &&
+        Number.isFinite(o.lat) &&
+        Number.isFinite(o.lng) &&
+        typeof o.zoom === "number" &&
+        Number.isFinite(o.zoom)
+      ) {
+        map.setView([o.lat, o.lng], o.zoom, { animate: false })
+        restoredRef.current = true
+        onRestoredFromSession()
+      }
+    } catch {
+      /* ignore */
+    }
+  }, [map, readOnly, locating, onRestoredFromSession])
+
+  useEffect(() => {
+    if (readOnly) return
+    const save = () => {
+      try {
+        const c = map.getCenter()
+        sessionStorage.setItem(
+          FARMS_DRAW_MAP_VIEW_KEY,
+          JSON.stringify({ lat: c.lat, lng: c.lng, zoom: map.getZoom() })
+        )
+      } catch {
+        /* ignore */
+      }
+    }
+    map.on("moveend", save)
+    return () => {
+      map.off("moveend", save)
+    }
+  }, [map, readOnly])
 
   return null
 }
@@ -176,8 +297,9 @@ export default function LeafletMap({
 
   // Location search state
   const [searchQuery, setSearchQuery] = useState("")
-  const [searchResults, setSearchResults] = useState<{ display_name: string; lat: string; lon: string }[]>([])
+  const [searchResults, setSearchResults] = useState<SearchSuggestion[]>([])
   const [showDropdown, setShowDropdown] = useState(false)
+  const [searching, setSearching] = useState(false)
   const searchTimeoutRef = useRef<number | null>(null)
   const searchBoxRef = useRef<HTMLDivElement | null>(null)
 
@@ -188,16 +310,17 @@ export default function LeafletMap({
   const walkLayerRef = useRef<L.LayerGroup | null>(null)
   const mapRef = useRef<L.Map | null>(null)
   const onBoundaryChangeRef = useRef(onBoundaryChange)
+  const skipGeolocationFlyRef = useRef(false)
+  const flyToCenterKeyRef = useRef<string | null>(null)
+  const boundaryPropSigRef = useRef<string>("")
+
+  const onSessionViewRestored = useCallback(() => {
+    skipGeolocationFlyRef.current = true
+  }, [])
 
   useEffect(() => {
     onBoundaryChangeRef.current = onBoundaryChange
   }, [onBoundaryChange])
-
-  useEffect(() => {
-    if (initialCenter && mapRef.current) {
-      mapRef.current.setView([initialCenter.lat, initialCenter.lng], 16)
-    }
-  }, [initialCenter])
 
   useEffect(() => {
     if (readOnly) {
@@ -225,6 +348,9 @@ export default function LeafletMap({
   }, [readOnly, initialBoundary?.length])
 
   useEffect(() => {
+    const sig = boundary.map((p) => `${p.lat},${p.lng},${p.id}`).join("|")
+    if (sig === boundaryPropSigRef.current) return
+    boundaryPropSigRef.current = sig
     setBoundaryPoints(boundary)
   }, [boundary])
 
@@ -268,11 +394,13 @@ export default function LeafletMap({
     onBoundaryChangeRef.current?.([], 0)
   }, [mapMode, readOnly])
 
-  // Debounced Nominatim search
+  // Debounced Nominatim search (Usage Policy: https://operations.osmfoundation.org/policies/nominatim/)
   useEffect(() => {
-    if (!searchQuery || searchQuery.length < 3) {
+    const q = searchQuery.trim()
+    if (q.length < 3) {
       setSearchResults([])
       setShowDropdown(false)
+      setSearching(false)
       if (searchTimeoutRef.current != null) {
         window.clearTimeout(searchTimeoutRef.current)
         searchTimeoutRef.current = null
@@ -284,19 +412,49 @@ export default function LeafletMap({
       window.clearTimeout(searchTimeoutRef.current)
     }
     searchTimeoutRef.current = window.setTimeout(async () => {
+      setSearching(true)
       try {
-        const url = `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(
-          searchQuery
-        )}&format=json&limit=5&countrycodes=in`
-        const res = await fetch(url, { headers: { "Accept-Language": "en" } })
-        if (!res.ok) return
-        const data = (await res.json()) as { display_name: string; lat: string; lon: string }[]
-        setSearchResults(data)
-        setShowDropdown(data.length > 0)
+        const searchUrl = new URL("https://nominatim.openstreetmap.org/search")
+        searchUrl.searchParams.set("q", q)
+        searchUrl.searchParams.set("format", "json")
+        searchUrl.searchParams.set("addressdetails", "1")
+        searchUrl.searchParams.set("limit", "8")
+        searchUrl.searchParams.set("dedupe", "1")
+        searchUrl.searchParams.set("featuretype", "settlement")
+        searchUrl.searchParams.set("viewbox", "68.1,37.1,97.4,8.0")
+        searchUrl.searchParams.set("bounded", "0")
+
+        const res = await fetch(searchUrl.toString(), {
+          headers: { "Accept-Language": "en" },
+        })
+        if (!res.ok) {
+          setSearchResults([])
+          setShowDropdown(false)
+          return
+        }
+        const data = (await res.json()) as Array<{
+          lat: string
+          lon: string
+          display_name?: string
+          name?: string
+          address?: Record<string, string | undefined>
+          boundingbox?: string[]
+        }>
+        const suggestions: SearchSuggestion[] = data.map((place) => ({
+          label: formatNominatimLabel(place),
+          lat: parseFloat(place.lat),
+          lng: parseFloat(place.lon),
+          boundingbox: place.boundingbox,
+        })).filter((s) => Number.isFinite(s.lat) && Number.isFinite(s.lng))
+        setSearchResults(suggestions)
+        setShowDropdown(suggestions.length > 0)
       } catch {
-        // ignore search errors
+        setSearchResults([])
+        setShowDropdown(false)
+      } finally {
+        setSearching(false)
       }
-    }, 500)
+    }, 400)
 
     return () => {
       if (searchTimeoutRef.current != null) {
@@ -506,12 +664,19 @@ export default function LeafletMap({
           )
         })()}
 
+        {!readOnly && (
+          <DrawMapViewSession
+            readOnly={readOnly}
+            locating={locating}
+            onRestoredFromSession={onSessionViewRestored}
+          />
+        )}
         {!readOnly && <ClickHandler onSelect={handleSelect} />}
-        <LocationFlyTo coords={currentLocation} />
+        <LocationFlyTo coords={currentLocation} skipFlyRef={skipGeolocationFlyRef} />
         <SearchFlyTo target={searchTarget} />
         <MapResizer isFullscreen={isFullscreen} />
-        <FlyToCenter center={initialCenter ?? null} />
-        <BoundaryLayers points={boundaryPoints} />
+        <FlyToCenter center={initialCenter ?? null} viewOnceKeyRef={flyToCenterKeyRef} />
+        <BoundaryLayers points={boundaryPoints} fitBoundsOnChange={!!readOnly} />
         <ScaleControl position="bottomleft" />
         <ZoomControl position="bottomleft" />
       </MapContainer>
@@ -582,39 +747,58 @@ export default function LeafletMap({
           ref={searchBoxRef}
           className="pointer-events-auto w-64 rounded-lg bg-white/95 px-3 py-2 shadow-sm border border-gray-200"
         >
-          <input
-            type="text"
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-            placeholder="Search village, district, city..."
-            className="w-full border-none bg-transparent text-xs outline-none focus:ring-0"
-          />
+          <div className="relative">
+            <input
+              type="text"
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              placeholder="Search village, district, city..."
+              className="w-full border-none bg-transparent pr-16 text-xs outline-none focus:ring-0"
+            />
+            {searching && searchQuery.trim().length >= 3 && (
+              <span className="pointer-events-none absolute right-0 top-1/2 max-w-[4.5rem] -translate-y-1/2 truncate text-[10px] text-gray-400">
+                Searching…
+              </span>
+            )}
+          </div>
           {showDropdown && searchResults.length > 0 && (
             <div className="mt-2 max-h-40 w-full overflow-y-auto rounded-md border bg-white text-xs shadow-lg">
               {searchResults.map((r, idx) => (
                 <button
-                  key={`${r.lat}-${r.lon}-${idx}`}
+                  key={`${r.label}-${r.lat}-${r.lng}-${idx}`}
                   type="button"
                   className="block w-full px-2 py-1 text-left hover:bg-gray-100"
                   onClick={() => {
-                    const lat = parseFloat(r.lat)
-                    const lon = parseFloat(r.lon)
-                    if (Number.isFinite(lat) && Number.isFinite(lon)) {
-                      if (mapRef.current) {
-                        mapRef.current.flyTo([lat, lon], 15)
-                      } else {
-                        setSearchTarget([lat, lon])
+                    const map = mapRef.current
+                    if (r.boundingbox && r.boundingbox.length >= 4 && map) {
+                      const [minLat, maxLat, minLon, maxLon] = r.boundingbox.map((v) => parseFloat(v))
+                      if (
+                        Number.isFinite(minLat) &&
+                        Number.isFinite(maxLat) &&
+                        Number.isFinite(minLon) &&
+                        Number.isFinite(maxLon)
+                      ) {
+                        map.fitBounds(
+                          [
+                            [minLat, minLon],
+                            [maxLat, maxLon],
+                          ],
+                          { maxZoom: 17, padding: [20, 20] }
+                        )
+                      } else if (Number.isFinite(r.lat) && Number.isFinite(r.lng)) {
+                        map.flyTo([r.lat, r.lng], 16, { animate: true, duration: 1.2 })
                       }
+                    } else if (map && Number.isFinite(r.lat) && Number.isFinite(r.lng)) {
+                      map.flyTo([r.lat, r.lng], 16, { animate: true, duration: 1.2 })
+                    } else if (Number.isFinite(r.lat) && Number.isFinite(r.lng)) {
+                      setSearchTarget([r.lat, r.lng])
                     }
-                    const shortName = r.display_name.split(",")[0] ?? r.display_name
-                    setSearchQuery(shortName)
+                    setSearchQuery(r.label)
                     setShowDropdown(false)
                     setSearchResults([])
                   }}
                 >
-                  {r.display_name.length > 60
-                    ? `${r.display_name.slice(0, 57)}...`
-                    : r.display_name}
+                  {r.label.length > 72 ? `${r.label.slice(0, 69)}…` : r.label}
                 </button>
               ))}
             </div>

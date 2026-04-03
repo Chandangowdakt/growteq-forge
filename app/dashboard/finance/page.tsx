@@ -22,8 +22,6 @@ import { formatINR } from "@/lib/utils"
 import { DashboardPageGuard } from "@/components/dashboard/dashboard-page-guard"
 import { Skeleton } from "@/components/ui/skeleton"
 
-const CR = 10_000_000
-
 function formatCr(n: number): string {
   return formatINR(n)
 }
@@ -65,19 +63,27 @@ function FinanceContent() {
     if (!summary?.costTrends?.length) {
       return [{ month: "—", polyhouse: 0, shade_net: 0, open_field: 0 }]
     }
-    return summary.costTrends.map((row) => ({
-      month: row.month,
-      polyhouse: row.polyhouse ?? 0,
-      shade_net: row.shade_net ?? 0,
-      open_field: row.open_field ?? 0,
-    }))
+    return summary.costTrends.map((row) => {
+      let monthLabel = row.month
+      if (/^\d{4}-\d{2}$/.test(row.month)) {
+        const [y, m] = row.month.split("-").map(Number)
+        const d = new Date(y, m - 1, 1)
+        monthLabel = d.toLocaleDateString("en-IN", { month: "short", year: "2-digit" })
+      }
+      return {
+        month: monthLabel,
+        polyhouse: row.polyhouse ?? 0,
+        shade_net: row.shade_net ?? 0,
+        open_field: row.open_field ?? 0,
+      }
+    })
   }, [summary])
 
   const comparisonRows = useMemo(() => {
     const comp = summary?.comparison?.length ? summary.comparison : defaultComparison
-    return comp.map((c: { type: string; roiMonths?: number; profitMargin?: string; initialInvestmentPerAcre?: string }) => ({
+    return comp.map((c) => ({
       type: c.type,
-      label: (c as { initialInvestmentPerAcre?: string }).initialInvestmentPerAcre ?? defaultComparison.find((d) => d.type === c.type)?.initialInvestmentPerAcre ?? "—",
+      label: c.initialInvestmentPerAcre ?? defaultComparison.find((d) => d.type === c.type)?.initialInvestmentPerAcre ?? "—",
       roi: `${c.roiMonths ?? 0} months`,
       margins: c.profitMargin ?? "—",
     }))
@@ -142,34 +148,41 @@ function FinanceContent() {
                 </CardTitle>
               </CardHeader>
               <CardContent>
-                <div className="flex items-center gap-2 text-xs">
-                  <TrendingUp className="h-3 w-3 text-green-600" />
-                  <span className="text-green-600">115% return potential</span>
+                <div className="flex flex-col gap-1 text-xs">
+                  <div className="flex items-center gap-2">
+                    <TrendingUp className="h-3 w-3 text-green-600 shrink-0" />
+                    <span className="text-green-600">115% return potential</span>
+                  </div>
+                  {summary != null && summary.avgROITimeline > 0 && (
+                    <p className="text-muted-foreground">
+                      Avg payback: {summary.avgROITimeline.toLocaleString("en-IN", { maximumFractionDigits: 1 })} mo
+                    </p>
+                  )}
                 </div>
               </CardContent>
             </Card>
 
             <Card className="border-l-4 border-l-blue-500">
               <CardHeader className="pb-2">
-                <CardDescription className="text-xs">Avg ROI Timeline</CardDescription>
+                <CardDescription className="text-xs">Active Proposals</CardDescription>
                 <CardTitle className="text-2xl text-blue-600">
-                  {summary?.avgROITimeline != null ? `${summary.avgROITimeline} months` : "—"}
+                  {summary?.activeProposals ?? 0}
                 </CardTitle>
               </CardHeader>
               <CardContent>
-                <p className="text-xs text-muted-foreground">Weighted average</p>
+                <p className="text-xs text-muted-foreground">Draft &amp; recommended only</p>
               </CardContent>
             </Card>
 
             <Card className="border-l-4 border-l-purple-600">
               <CardHeader className="pb-2">
-                <CardDescription className="text-xs">Active Proposals</CardDescription>
+                <CardDescription className="text-xs">This Month (Submitted Evaluations)</CardDescription>
                 <CardTitle className="text-2xl text-purple-600">
-                  {summary?.activeProposals ?? 0}
+                  {summary != null ? formatCr(summary.thisMonthSubmittedInvestment ?? 0) : "₹0"}
                 </CardTitle>
               </CardHeader>
               <CardContent>
-                <p className="text-xs text-muted-foreground">Non-rejected</p>
+                <p className="text-xs text-muted-foreground">Sum of calculated investment · submitted this month</p>
               </CardContent>
             </Card>
           </div>

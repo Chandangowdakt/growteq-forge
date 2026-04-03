@@ -213,7 +213,7 @@ export interface SiteEvaluationCreateResponse {
 }
 
 export const siteEvaluationsApi = {
-  list: (params?: { farmId?: string; status?: string }) =>
+  list: (params?: { farmId?: string; siteId?: string; status?: string }) =>
     request<{ success: boolean; data: SiteEvaluation[] }>(
       "GET",
       "/api/site-evaluations",
@@ -359,6 +359,8 @@ export interface DashboardSummary {
 
 export interface WorkInProgressItem {
   _id: string
+  farmId?: string
+  siteId?: string
   farmName: string
   siteName: string
   area: number
@@ -383,6 +385,8 @@ export interface FinanceSummary {
   expectedROI: number
   avgROITimeline: number
   activeProposals: number
+  /** Sum of `calculatedInvestment` on evaluations with status submitted this calendar month. */
+  thisMonthSubmittedInvestment?: number
   costTrends: { month: string; polyhouse?: number; shade_net?: number; open_field?: number }[]
   comparison: { type: string; roiMonths: number; profitMargin: string; initialInvestmentPerAcre?: string }[]
 }
@@ -424,6 +428,17 @@ export const reportsApi = {
       "DELETE",
       `/api/reports/${encodeURIComponent(fileName)}`
     ),
+  /** Sites with geoJSON for farms the user can access (Quick Report → Export map). */
+  exportMapData: () =>
+    request<{ success: boolean; data: unknown[] }>("GET", "/api/reports/export/map-data"),
+  /** Combined PDF for multiple site ids (latest eval per site). */
+  downloadMultiSitePdf: (siteIds: string[]) =>
+    api
+      .post<Blob>("/api/reports/multi-site", { siteIds }, { responseType: "blob" })
+      .then((r) => r.data),
+  /** CSV of evaluations (Quick Report → Data table). */
+  downloadEvaluationsCsv: () =>
+    api.get<Blob>("/api/reports/export/data-table", { responseType: "blob" }).then((r) => r.data),
 }
 
 // Settings team
@@ -530,7 +545,7 @@ export const auditApi = {
     ),
 }
 
-// Insights (use backend base URL — api instance already sends Bearer token)
+// Insights — paths are absolute on the shared axios client (`NEXT_PUBLIC_API_URL`), not relative to Next.js.
 export interface PipelineByMonth {
   month: string
   approved: number
@@ -547,6 +562,7 @@ export interface PipelineData {
 export interface SiteRankingEntry {
   siteId: string
   siteName?: string
+  name?: string
   area: number
   score?: number
   roiMonths?: number | null

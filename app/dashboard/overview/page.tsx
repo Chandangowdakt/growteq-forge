@@ -23,6 +23,66 @@ interface SummaryData {
   revenueTrend: { month: string; value: number }[]
 }
 
+function numField(v: unknown, fallback = 0): number {
+  if (typeof v === "number" && Number.isFinite(v)) return v
+  return fallback
+}
+
+/** Map alternate / legacy dashboard summary keys and trend row shapes to the UI model. */
+function normalizeDashboardSummary(raw: Record<string, unknown> | null | undefined): SummaryData {
+  const s = raw ?? {}
+  const trendRaw = s.revenueTrend ?? s.monthlyRevenue
+  const arr = Array.isArray(trendRaw) ? trendRaw : []
+
+  const revenueTrend: { month: string; value: number }[] = []
+  for (const item of arr) {
+    if (!item || typeof item !== "object") continue
+    const o = item as Record<string, unknown>
+    if (typeof o.month === "string" && typeof o.value === "number") {
+      revenueTrend.push({ month: o.month, value: o.value })
+      continue
+    }
+    if (typeof o.month === "string" && typeof o.revenue === "number") {
+      revenueTrend.push({ month: o.month, value: o.revenue })
+      continue
+    }
+    const id = o._id
+    if (id && typeof id === "object") {
+      const ido = id as Record<string, unknown>
+      const m = ido.month
+      const y = ido.year
+      const total = o.total
+      if (typeof total === "number") {
+        let monthLabel: string
+        if (typeof y === "number" && typeof m === "number") {
+          monthLabel = `${y}-${String(m).padStart(2, "0")}`
+        } else if (typeof m === "string" || typeof m === "number") {
+          monthLabel = String(m)
+        } else {
+          monthLabel = "—"
+        }
+        revenueTrend.push({ month: monthLabel, value: total })
+        continue
+      }
+    }
+    if (typeof o.total === "number") {
+      revenueTrend.push({
+        month: typeof o.month === "string" ? o.month : "—",
+        value: o.total,
+      })
+    }
+  }
+
+  return {
+    totalSites: numField(s.totalSites ?? s.activeSites),
+    totalArea: numField(s.totalArea ?? s.totalLandArea),
+    totalProposals: numField(s.totalProposals ?? s.totalFarms),
+    pipelineValue: numField(s.pipelineValue ?? s.totalRevenue),
+    averageROI: numField(s.averageROI),
+    revenueTrend,
+  }
+}
+
 function OverviewPageContent() {
   const { user } = useAuth()
   const [data, setData] = useState<SummaryData | null>(null)
@@ -45,16 +105,10 @@ function OverviewPageContent() {
         revenueTrend: [],
       })
 
-      const { data: summary } = await dashboardApi.summary()
-
-      setData({
-        totalSites: summary.totalSites ?? 0,
-        totalArea: summary.totalArea ?? 0,
-        totalProposals: summary.totalProposals ?? 0,
-        pipelineValue: summary.pipelineValue ?? 0,
-        averageROI: summary.averageROI ?? 0,
-        revenueTrend: Array.isArray(summary.revenueTrend) ? summary.revenueTrend : [],
-      })
+      const res = await dashboardApi.summary()
+      setData(
+        normalizeDashboardSummary((res?.data ?? {}) as unknown as Record<string, unknown>)
+      )
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to load dashboard")
     } finally {
@@ -85,7 +139,7 @@ function OverviewPageContent() {
       <div className="max-w-7xl mx-auto px-6 py-8 space-y-8">
         <Skeleton className="h-9 w-48" />
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-          {Array.from({ length: 6 }).map((_, i) => (
+          {Array.from({ length: 5 }).map((_, i) => (
             <Card key={i} className="rounded-2xl shadow-sm">
               <CardHeader className="p-6 space-y-2">
                 <Skeleton className="h-3 w-24" />
@@ -173,7 +227,7 @@ function OverviewPageContent() {
               Total Area (acres)
             </CardDescription>
             <CardTitle className="text-2xl font-semibold">
-              {Math.round(totalArea * 100) / 100}
+              {Number(totalArea).toLocaleString("en-IN", { maximumFractionDigits: 1, minimumFractionDigits: 0 })}
             </CardTitle>
           </CardHeader>
         </Card>
@@ -204,18 +258,9 @@ function OverviewPageContent() {
               Average ROI (months)
             </CardDescription>
             <CardTitle className="text-2xl font-semibold">
-              {averageROI.toLocaleString("en-IN", { maximumFractionDigits: 1 })}
-            </CardTitle>
-          </CardHeader>
-        </Card>
-
-        <Card className="rounded-2xl shadow-sm">
-          <CardHeader className="p-6">
-            <CardDescription className="text-xs uppercase tracking-wide text-muted-foreground">
-              Proposals in Pipeline
-            </CardDescription>
-            <CardTitle className="text-2xl font-semibold">
-              {totalProposals}
+              {averageROI > 0
+                ? `${averageROI.toLocaleString("en-IN", { maximumFractionDigits: 1 })} mo`
+                : "N/A"}
             </CardTitle>
           </CardHeader>
         </Card>

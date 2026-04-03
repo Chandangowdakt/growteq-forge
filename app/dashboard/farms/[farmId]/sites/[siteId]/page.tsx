@@ -8,9 +8,9 @@ import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import dynamic from "next/dynamic"
 import { toast } from "@/hooks/use-toast"
-import { hasPermission } from "@/lib/permissions"
+import { hasPermission, canWriteModule } from "@/lib/permissions"
 import { useAuth } from "@/app/context/auth-context"
-import { farmsApi, reportsApi } from "@/lib/api"
+import { farmsApi, api, siteEvaluationsApi, ApiError, type SiteEvaluation } from "@/lib/api"
 import { Download } from "lucide-react"
 import type { LeafletMapProps } from "@/app/dashboard/farms/LeafletMap"
 
@@ -58,6 +58,35 @@ export default function SiteDetailPage() {
   const [boundary, setBoundary] = useState<BoundaryPoint[]>([])
   const [downloadingPdf, setDownloadingPdf] = useState(false)
   const [farmName, setFarmName] = useState<string | null>(null)
+  const [latestEvaluation, setLatestEvaluation] = useState<SiteEvaluation | null>(null)
+  const fetchLatestEvaluation = useCallback(async () => {
+    if (!siteId) {
+      setLatestEvaluation(null)
+      return
+    }
+    try {
+      const res = await siteEvaluationsApi.list({ siteId })
+      const list = res.success && Array.isArray(res.data) ? res.data : []
+      setLatestEvaluation(list[0] ?? null)
+    } catch {
+      setLatestEvaluation(null)
+    }
+  }, [siteId])
+
+  useEffect(() => {
+    void fetchLatestEvaluation()
+  }, [fetchLatestEvaluation])
+
+  useEffect(() => {
+    const onVisible = () => {
+      if (typeof document !== "undefined" && document.visibilityState === "visible") {
+        void fetchLatestEvaluation()
+      }
+    }
+    document.addEventListener("visibilitychange", onVisible)
+    return () => document.removeEventListener("visibilitychange", onVisible)
+  }, [fetchLatestEvaluation])
+
   const statusBadgeVariant = useMemo(() => {
     const status = site?.status ?? "draft"
     switch (status) {
@@ -238,6 +267,10 @@ export default function SiteDetailPage() {
 
   const handleStartEvaluation = () => {
     if (!site || !farmId) return
+    if (latestEvaluation?._id) {
+      router.push(`/dashboard/site-evaluations/${latestEvaluation._id}`)
+      return
+    }
     const encodedSiteId = encodeURIComponent(site._id)
     const encodedFarmId = encodeURIComponent(farmId)
     router.push(`/dashboard/site-evaluations/new?siteId=${encodedSiteId}&farmId=${encodedFarmId}`)
@@ -247,25 +280,27 @@ export default function SiteDetailPage() {
     if (!siteId) return
     setDownloadingPdf(true)
     try {
-      const res = await reportsApi.generate({
-        reportType: "site_evaluation",
-        format: "pdf",
-        siteIds: [siteId],
+      const res = await api.get(`/api/reports/site-evaluation/${encodeURIComponent(siteId)}`, {
+        responseType: "blob",
       })
-      const downloadUrl = res?.data?.downloadUrl
-      const fileName = res?.data?.fileName
-      if (!downloadUrl || !fileName) throw new Error("Invalid response")
-      const apiUrl = process.env.NEXT_PUBLIC_API_URL || "http://localhost:5000"
-      const token = typeof window !== "undefined" ? localStorage.getItem("forge_token") : null
-      const fileRes = await fetch(apiUrl + downloadUrl, {
-        headers: token ? { Authorization: `Bearer ${token}` } : {},
-      })
-      if (!fileRes.ok) throw new Error("Download failed")
-      const blob = await fileRes.blob()
+      const blob = res.data as Blob
+      const contentType = (res.headers["content-type"] || "").toLowerCase()
+      if (!contentType.includes("application/pdf")) {
+        const text = await blob.text()
+        let msg = "PDF generation failed."
+        try {
+          const j = JSON.parse(text) as { error?: string; message?: string }
+          msg = j.error || j.message || msg
+        } catch {
+          /* keep msg */
+        }
+        throw new Error(msg)
+      }
+      const filenameBase = (site?.name || siteId).replace(/[^a-zA-Z0-9-_.\s]/g, "-") || "evaluation"
       const objectUrl = URL.createObjectURL(blob)
       const a = document.createElement("a")
       a.href = objectUrl
-      a.download = fileName
+      a.download = `${filenameBase}-evaluation.pdf`
       document.body.appendChild(a)
       a.click()
       a.remove()
@@ -273,9 +308,25 @@ export default function SiteDetailPage() {
       toast({ title: "Download started", description: "Site evaluation PDF" })
     } catch (e) {
       console.error(e)
+      let description = "PDF generation failed. Please try again."
+      if (e instanceof ApiError && e.statusCode === 404 && e.data instanceof Blob) {
+        try {
+          const t = await e.data.text()
+          const j = JSON.parse(t) as { error?: string }
+          const errMsg = j.error || ""
+          description =
+            errMsg.includes("No site evaluation") || errMsg.includes("Complete an evaluation")
+              ? "No evaluation found for this site. Complete an evaluation first."
+              : errMsg || description
+        } catch {
+          description = "No evaluation found for this site. Complete an evaluation first."
+        }
+      } else if (e instanceof Error && e.message) {
+        description = e.message
+      }
       toast({
         title: "PDF download failed",
-        description: "Try generating from the Reports page.",
+        description,
         variant: "destructive",
       })
     } finally {
@@ -406,14 +457,14 @@ export default function SiteDetailPage() {
                     />
                   </div>
                 )}
-                {hasPermission(user, "canCreateSite") && (
+                {canWriteModule(user, "evaluations") && (
                   <div className="mt-5 flex w-full flex-col gap-2 sm:items-end">
                     <Button
                       type="button"
                       className="w-full bg-[#387F43] hover:bg-[#2d6535] text-white sm:w-auto sm:min-w-[11rem]"
                       onClick={handleStartEvaluation}
                     >
-                      Start Evaluation
+                      {latestEvaluation?._id ? "Edit evaluation" : "Start evaluation"}
                     </Button>
                   </div>
                 )}

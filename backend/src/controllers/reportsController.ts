@@ -7,6 +7,7 @@ import { jsPDF } from "jspdf"
 import { asyncHandler } from "../utils/asyncHandler"
 import { AuthenticatedRequest } from "../middleware/auth"
 import { ApiError } from "../utils/ApiError"
+import { needsOwnUserScope } from "../utils/permissionUtils"
 import { SiteEvaluation } from "../models/SiteEvaluation"
 import { Proposal } from "../models/Proposal"
 import { Site } from "../models/Site"
@@ -22,6 +23,74 @@ const REPORT_TYPES = [
   "site_comparison",
   "executive_summary",
 ] as const
+
+const notDeletedFarm = { deletedAt: { $exists: false } }
+
+/**
+ * Load site, farm (with same access rules as farmController), latest evaluation, proposal, and map snapshot
+ * for the farm evaluation proforma PDF.
+ */
+async function resolveSiteEvaluationPdfInputs(
+  siteIdParam: string,
+  req: AuthenticatedRequest
+): Promise<{
+  site: Record<string, unknown>
+  farm: Record<string, unknown> | null
+  ev: Record<string, unknown>
+  prop: Record<string, unknown> | null
+  mapBase64: string | null
+}> {
+  if (!mongoose.Types.ObjectId.isValid(String(siteIdParam))) {
+    throw new ApiError(400, "Invalid site id")
+  }
+  const siteIdObj = new mongoose.Types.ObjectId(String(siteIdParam))
+  const siteRaw = await Site.findById(siteIdObj).lean()
+  if (!siteRaw) {
+    throw new ApiError(404, "Site not found")
+  }
+  const site = siteRaw as Record<string, unknown>
+  const userId = req.auth!.userId
+  const farmId = site.farmId as mongoose.Types.ObjectId | undefined
+  if (!farmId) {
+    throw new ApiError(404, "Site not found")
+  }
+  const farmQuery: Record<string, unknown> = { _id: farmId, ...notDeletedFarm }
+  if (needsOwnUserScope(req.user, "farms")) {
+    farmQuery.userId = new mongoose.Types.ObjectId(userId)
+  }
+  const farm = (await Farm.findOne(farmQuery).lean()) as Record<string, unknown> | null
+  if (!farm) {
+    throw new ApiError(404, "Site not found")
+  }
+
+  const evalFilter: Record<string, unknown> = {
+    siteId: siteIdObj,
+    farmId: farm._id as mongoose.Types.ObjectId,
+  }
+  if (needsOwnUserScope(req.user, "evaluations")) {
+    evalFilter.userId = new mongoose.Types.ObjectId(userId)
+  }
+  const latestEval = (await SiteEvaluation.findOne(evalFilter)
+    .sort({ createdAt: -1 })
+    .lean()) as Record<string, unknown> | null
+
+  if (!latestEval) {
+    throw new ApiError(
+      404,
+      "No site evaluation found for this site. Complete an evaluation first."
+    )
+  }
+
+  const prop = (await Proposal.findOne({ siteId: siteIdObj }).sort({ createdAt: -1 }).lean()) as Record<
+    string,
+    unknown
+  > | null
+
+  const geojson = (site as { geojson?: unknown }).geojson
+  const mapBase64 = geojson ? await getMapboxImage(geojson) : null
+
+  return { site: site as any, farm: farm as any, ev: latestEval as any, prop, mapBase64 }
+}
 
 function getReportsDir(): string {
   return path.resolve(path.join(__dirname, "..", "..", "public", "reports"))
@@ -2215,6 +2284,195 @@ export const generateFarmReport = asyncHandler(
     res.json({ success: true, url: `/reports/${fileName}` })
   }
 )
+
+/** Stream farm evaluation proforma PDF for a single site (same PDF as reportType site_evaluation). */
+export const downloadSiteEvaluationPdfBySite = asyncHandler(
+  async (req: AuthenticatedRequest, res: Response) => {
+    const siteIdParam = req.params.siteId as string
+    const reportId = `RPT-${Date.now()}`
+    const { site, farm, ev, prop, mapBase64 } = await resolveSiteEvaluationPdfInputs(siteIdParam, req)
+    const pdfBuffer = await createFarmEvaluationProformaPDF(site, farm, ev, prop, mapBase64, reportId)
+    const nameRaw = typeof (site as { name?: string }).name === "string" ? (site as { name: string }).name : "site"
+    const safeName = nameRaw.replace(/[^a-zA-Z0-9-_.\s]/g, "-").trim().slice(0, 80) || "site"
+    res.setHeader("Content-Type", "application/pdf")
+    res.setHeader("Content-Disposition", `attachment; filename="site-evaluation-${safeName}.pdf"`)
+    res.send(pdfBuffer)
+  }
+)
+
+/** PDF table: latest evaluation per selected site (must be on farms user can access). */
+export const downloadMultiSiteEvaluationPdf = asyncHandler(
+  async (req: AuthenticatedRequest, res: Response) => {
+    const userId = req.auth!.userId
+    const { siteIds: rawSiteIds } = req.body as { siteIds?: unknown }
+    if (!Array.isArray(rawSiteIds) || rawSiteIds.length === 0) {
+      throw new ApiError(400, "siteIds array is required")
+    }
+    const requested = rawSiteIds
+      .map((id) =>
+        typeof id === "string" && mongoose.Types.ObjectId.isValid(id) ? String(id) : null
+      )
+      .filter((x): x is string => x != null)
+    if (!requested.length) {
+      throw new ApiError(400, "No valid site ids")
+    }
+
+    const farmQuery: Record<string, unknown> = { ...notDeletedFarm }
+    if (needsOwnUserScope(req.user, "farms")) {
+      farmQuery.userId = new mongoose.Types.ObjectId(userId)
+    }
+    const farmIds = await Farm.find(farmQuery).distinct("_id")
+    const requestedOids = requested.map((id) => new mongoose.Types.ObjectId(id))
+    const allowedSiteObjectIds = (await Site.find({
+      farmId: { $in: farmIds },
+      _id: { $in: requestedOids },
+    }).distinct("_id")) as mongoose.Types.ObjectId[]
+
+    const allowedSet = new Set(allowedSiteObjectIds.map((x) => String(x)))
+    const orderedIds = requested.filter((id) => allowedSet.has(id))
+    if (!orderedIds.length) {
+      throw new ApiError(404, "No accessible sites match the selection")
+    }
+
+    const evalFilter: Record<string, unknown> = {
+      siteId: { $in: allowedSiteObjectIds },
+    }
+    if (needsOwnUserScope(req.user, "evaluations")) {
+      evalFilter.userId = new mongoose.Types.ObjectId(userId)
+    }
+    const evaluations = (await SiteEvaluation.find(evalFilter)
+      .sort({ createdAt: -1 })
+      .lean()) as Array<Record<string, unknown>>
+
+    const latestBySite = new Map<string, Record<string, unknown>>()
+    for (const ev of evaluations) {
+      const sid = String(ev.siteId)
+      if (!latestBySite.has(sid)) latestBySite.set(sid, ev)
+    }
+
+    const rows: string[][] = []
+    for (const idStr of orderedIds) {
+      const ev = latestBySite.get(idStr)
+      const siteDoc = (await Site.findById(idStr).lean()) as Record<string, unknown> | null
+      const siteName =
+        (siteDoc?.name as string) || (ev?.name as string) || idStr.slice(0, 8)
+      const areaNum = Number(siteDoc?.area ?? ev?.area ?? 0)
+      const area = `${Number.isFinite(areaNum) ? areaNum.toFixed(2) : "0"} ac`
+      const infra = ev ? String(ev.infrastructureRecommendation ?? "—") : "—"
+      const slope =
+        ev && ev.slopePercentage != null
+          ? String(ev.slopePercentage)
+          : ev && ev.slope != null
+            ? String(ev.slope)
+            : "—"
+      const status = ev ? String(ev.status ?? "—") : "No evaluation"
+      const dateStr =
+        ev && ev.createdAt
+          ? new Date(ev.createdAt as Date).toLocaleDateString("en-IN")
+          : "—"
+      rows.push([siteName, area, infra, slope, status, dateStr])
+    }
+
+    const reportId = `RPT-${Date.now()}`
+    const pdfBuffer = createPDF(
+      "Multi-site evaluation summary",
+      "Latest evaluation per selected site",
+      [
+        {
+          heading: "Sites",
+          headers: ["Site", "Area", "Infrastructure", "Slope %", "Status", "Evaluated"],
+          rows,
+        },
+      ],
+      reportId
+    )
+    res.setHeader("Content-Type", "application/pdf")
+    res.setHeader("Content-Disposition", 'attachment; filename="multi-site-evaluation-summary.pdf"')
+    res.send(pdfBuffer)
+  }
+)
+
+/** CSV export of evaluations the user can see (scoped like list APIs). */
+export const exportEvaluationsDataTableCsv = asyncHandler(
+  async (req: AuthenticatedRequest, res: Response) => {
+    const userId = req.auth!.userId
+    const farmQuery: Record<string, unknown> = { ...notDeletedFarm }
+    if (needsOwnUserScope(req.user, "farms")) {
+      farmQuery.userId = new mongoose.Types.ObjectId(userId)
+    }
+    const farmIds = await Farm.find(farmQuery).distinct("_id")
+    const siteIdsInFarms = await Site.find({ farmId: { $in: farmIds } }).distinct("_id")
+
+    const evalFilter: Record<string, unknown> = {
+      siteId: { $in: siteIdsInFarms },
+    }
+    if (needsOwnUserScope(req.user, "evaluations")) {
+      evalFilter.userId = new mongoose.Types.ObjectId(userId)
+    }
+
+    const evaluations = await SiteEvaluation.find(evalFilter)
+      .sort({ createdAt: -1 })
+      .populate("siteId", "name area")
+      .lean()
+
+    const esc = (v: unknown): string => {
+      const t = v == null ? "" : String(v)
+      if (/[",\n\r]/.test(t)) return `"${t.replace(/"/g, '""')}"`
+      return t
+    }
+
+    const header = [
+      "Site name",
+      "Area (ac)",
+      "Soil type",
+      "Water",
+      "Infrastructure",
+      "Slope %",
+      "Calculated investment",
+      "Status",
+      "Created",
+    ]
+    const lines = [header.map(esc).join(",")]
+    for (const e of evaluations as Array<Record<string, unknown>>) {
+      const sitePop = e.siteId as { name?: string; area?: number } | null
+      const siteName = sitePop?.name ?? e.name ?? ""
+      const area = sitePop?.area ?? e.area ?? ""
+      lines.push(
+        [
+          siteName,
+          area,
+          e.soilType ?? "",
+          e.waterAvailability ?? "",
+          e.infrastructureRecommendation ?? "",
+          e.slopePercentage ?? e.slope ?? "",
+          e.calculatedInvestment ?? "",
+          e.status ?? "",
+          e.createdAt ? new Date(e.createdAt as Date).toISOString() : "",
+        ]
+          .map(esc)
+          .join(",")
+      )
+    }
+
+    res.setHeader("Content-Type", "text/csv; charset=utf-8")
+    res.setHeader("Content-Disposition", 'attachment; filename="growteq-evaluations-export.csv"')
+    res.send("\uFEFF" + lines.join("\n"))
+  }
+)
+
+/** GeoJSON-capable site list for farms the user can access (for map tooling). */
+export const exportMapDataJson = asyncHandler(async (req: AuthenticatedRequest, res: Response) => {
+  const userId = req.auth!.userId
+  const farmQuery: Record<string, unknown> = { ...notDeletedFarm }
+  if (needsOwnUserScope(req.user, "farms")) {
+    farmQuery.userId = new mongoose.Types.ObjectId(userId)
+  }
+  const farmIds = await Farm.find(farmQuery).distinct("_id")
+  const sites = await Site.find({ farmId: { $in: farmIds } })
+    .select("name area farmId geojson status perimeter slope createdAt updatedAt")
+    .lean()
+  res.json({ success: true, data: sites })
+})
  
 export const generateReport = asyncHandler(
   async (req: AuthenticatedRequest, res: Response) => {
@@ -2250,62 +2508,70 @@ export const generateReport = asyncHandler(
         const reportId = `RPT-${timestamp}`
  
         if (reportType === "site_evaluation") {
-          const userFarms = (await Farm.find({ userId }).lean()) as any[]
-          const farmIds = userFarms.map((f) => f._id.toString())
-          const farmObjectIds = farmIds.map((id) => new mongoose.Types.ObjectId(id))
-          const farmMap = new Map(userFarms.map((f) => [f._id.toString(), f]))
-
-          const requestedSiteId =
+          const requestedSiteIdStr =
             siteIds?.length && mongoose.Types.ObjectId.isValid(String(siteIds[0]))
-              ? new mongoose.Types.ObjectId(String(siteIds[0]))
+              ? String(siteIds[0])
               : null
 
-          let latestEval: any
-          if (requestedSiteId) {
-            latestEval = await SiteEvaluation.findOne({
-              siteId: requestedSiteId,
-              farmId: { $in: farmObjectIds },
-            })
-              .sort({ createdAt: -1 })
-              .lean()
+          if (requestedSiteIdStr) {
+            const { site, farm, ev, prop, mapBase64 } = await resolveSiteEvaluationPdfInputs(
+              requestedSiteIdStr,
+              req
+            )
+            pdfBuffer = await createFarmEvaluationProformaPDF(site, farm, ev, prop, mapBase64, reportId)
           } else {
-            latestEval = await SiteEvaluation.findOne({
+            const farmQuery: Record<string, unknown> = { ...notDeletedFarm }
+            if (needsOwnUserScope(req.user, "farms")) {
+              farmQuery.userId = new mongoose.Types.ObjectId(userId)
+            }
+            const userFarms = (await Farm.find(farmQuery).lean()) as any[]
+            const farmIds = userFarms.map((f: { _id: { toString: () => string } }) => f._id.toString())
+            const farmMap = new Map(
+              userFarms.map((f: { _id: { toString: () => string } }) => [f._id.toString(), f])
+            )
+
+            if (farmIds.length === 0) {
+              return res.status(404).json({
+                success: false,
+                error: "No site evaluations found. Please evaluate a site first.",
+              })
+            }
+
+            const evalFilter: Record<string, unknown> = {
               siteId: {
                 $in: await Site.find({ farmId: { $in: farmIds } }).distinct("_id"),
               },
-            })
+            }
+            if (needsOwnUserScope(req.user, "evaluations")) {
+              evalFilter.userId = new mongoose.Types.ObjectId(userId)
+            }
+            const latestEval = (await SiteEvaluation.findOne(evalFilter)
               .sort({ createdAt: -1 })
-              .lean()
+              .lean()) as any
+
+            if (!latestEval) {
+              return res.status(404).json({
+                success: false,
+                error: "No site evaluations found. Please evaluate a site first.",
+              })
+            }
+
+            const site = (await Site.findById(latestEval.siteId).lean()) as any
+            if (!site) {
+              return res.status(404).json({
+                success: false,
+                error: "Site not found",
+              })
+            }
+
+            const farm = farmMap.get(site.farmId?.toString() || "") as any
+            const ev = latestEval
+            const prop = (await Proposal.findOne({ siteId: site._id })
+              .sort({ createdAt: -1 })
+              .lean()) as any
+            const mapBase64 = site.geojson ? await getMapboxImage(site.geojson) : null
+            pdfBuffer = await createFarmEvaluationProformaPDF(site, farm, ev, prop, mapBase64, reportId)
           }
-
-          if (!latestEval) {
-            return res.status(404).json({
-              success: false,
-              error: requestedSiteId
-                ? "No site evaluation found for this site. Complete an evaluation first."
-                : "No site evaluations found. Please evaluate a site first.",
-            })
-          }
-
-          // Get only that one site
-          const site = (await Site.findById(latestEval.siteId).lean()) as any
-          if (!site) {
-            return res.status(404).json({
-              success: false,
-              error: "Site not found",
-            })
-          }
-
-          const farm = farmMap.get(site.farmId?.toString() || "") as any
-
-          const ev = latestEval
-          const prop = (await Proposal.findOne({ siteId: site._id })
-            .sort({ createdAt: -1 })
-            .lean()) as any
-
-          const mapBase64 = site.geojson ? await getMapboxImage(site.geojson) : null
-
-          pdfBuffer = await createFarmEvaluationProformaPDF(site, farm, ev, prop, mapBase64, reportId)
  
         } else if (reportType === "infrastructure_proposal") {
           const farms = (await Farm.find({ userId }).lean()) as any[]

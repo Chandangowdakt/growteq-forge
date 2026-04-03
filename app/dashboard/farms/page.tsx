@@ -263,6 +263,12 @@ export default function FarmsPage() {
     return Number((turfLength(lineString(coords), { units: 'kilometers' }) * 1000).toFixed(2))
   }
 
+  const handleDrawBoundaryChange = useCallback((points: BoundaryPoint[], area: number) => {
+    setBoundaryPoints(points)
+    setCalculatedArea(area)
+    setPerimeter(computePerimeter(points))
+  }, [])
+
   const handleSaveSite = async () => {
     if (boundaryPoints.length < 3) {
       toast({
@@ -535,7 +541,7 @@ export default function FarmsPage() {
             {canWriteModule(user, "farms") && (
               <Button
                 type="button"
-                className="shrink-0 !bg-green-600 hover:!bg-green-700 !text-white"
+                className="shrink-0 bg-[#387F43] hover:bg-[#2d6535] text-white"
                 onClick={() => setCreateFarmOpen(true)}
                 disabled={farmsLoading}
               >
@@ -565,7 +571,7 @@ export default function FarmsPage() {
                 {canWriteModule(user, "farms") && (
                   <Button
                     type="button"
-                    className="mt-6 !bg-green-600 hover:!bg-green-700 !text-white"
+                    className="mt-6 bg-[#387F43] hover:bg-[#2d6535] text-white"
                     onClick={() => setCreateFarmOpen(true)}
                   >
                     Create Farm
@@ -821,9 +827,13 @@ export default function FarmsPage() {
                       {canWriteModule(user, "evaluations") && (
                         <Button variant="outline" size="sm" asChild>
                           <Link
-                            href={`/dashboard/site-evaluations/new?siteId=${encodeURIComponent(selectedMapSiteId)}&farmId=${encodeURIComponent(selectedFarmId)}`}
+                            href={
+                              selectedSiteEval
+                                ? `/dashboard/site-evaluations/${selectedSiteEval._id}`
+                                : `/dashboard/site-evaluations/new?siteId=${encodeURIComponent(selectedMapSiteId)}&farmId=${encodeURIComponent(selectedFarmId)}`
+                            }
                           >
-                            Evaluate Site
+                            {selectedSiteEval ? "Edit evaluation" : "Evaluate site"}
                           </Link>
                         </Button>
                       )}
@@ -839,9 +849,9 @@ export default function FarmsPage() {
                           {downloadingEvalPdf ? "Generating…" : "Download Evaluation PDF"}
                         </Button>
                       )}
-                      {selectedSiteEval?.proposalId && canReadModule(user, "evaluations") ? (
+                      {selectedSiteEval?.proposalId && canReadModule(user, "proposals") ? (
                         <Button variant="outline" size="sm" asChild>
-                          <Link href={`/dashboard/site-evaluations/${selectedSiteEval._id}`}>
+                          <Link href={`/dashboard/proposals/${selectedSiteEval.proposalId}`}>
                             View Proposal
                           </Link>
                         </Button>
@@ -891,11 +901,7 @@ export default function FarmsPage() {
                 <div className="flex-1 min-h-[240px] w-full overflow-hidden rounded-lg border bg-white">
                   <LeafletMap
                     boundary={boundaryPoints}
-                    onBoundaryChange={(points: BoundaryPoint[], area: number) => {
-                      setBoundaryPoints(points)
-                      setCalculatedArea(area)
-                      setPerimeter(computePerimeter(points))
-                    }}
+                    onBoundaryChange={handleDrawBoundaryChange}
                     isFullscreen={isFullscreen}
                     onExitFullscreen={() => setIsFullscreen(false)}
                   />
