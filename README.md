@@ -54,10 +54,16 @@ pnpm install
 pnpm run build
 ```
 
-Optional seed data:
+Optional seed data (creates demo data; **resets** farms/sites/evaluations for that admin):
 
 ```bash
 pnpm exec tsx src/seed.ts
+```
+
+Production: if login returns “account is not approved yet” but you need an admin `User` in MongoDB (without wiping data), run once from `backend/` with env set:
+
+```bash
+ENSURE_ADMIN_PASSWORD='your-secure-password' pnpm run ensure-admin
 ```
 
 Run API:

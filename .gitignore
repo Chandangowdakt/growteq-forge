@@ -25,6 +25,9 @@ backend/dist
 coverage
 .nyc_output
 
+# Local archives (do not commit)
+*.zip
+
 # OS & editors
 .DS_Store
 Thumbs.db
