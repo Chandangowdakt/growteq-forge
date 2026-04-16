@@ -60,11 +60,19 @@ Optional seed data (creates demo data; **resets** farms/sites/evaluations for th
 pnpm exec tsx src/seed.ts
 ```
 
-Production: if login returns “account is not approved yet” but you need an admin `User` in MongoDB (without wiping data), run once from `backend/` with env set:
+If the admin `User` was deleted or you are locked out, recreate **`admin@growteq.com`** from `backend/` (loads `backend/.env`):
 
 ```bash
-ENSURE_ADMIN_PASSWORD='your-secure-password' pnpm run ensure-admin
+pnpm exec tsx src/scripts/ensureAdminUser.ts admin123
 ```
+
+If that email already exists but the password is wrong:
+
+```bash
+pnpm exec tsx src/scripts/ensureAdminUser.ts --reset admin123
+```
+
+Alternatively: `ENSURE_ADMIN_PASSWORD='…' pnpm run ensure-admin`
 
 Run API:
 
