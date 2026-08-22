@@ -1,243 +1,313 @@
-# Growteq Farm Management System — Architecture Summary
+# Growteq Forge — Architecture
 
-This document gives a developer a fast, structured understanding of the full system without reading every file.
+This document describes the **current** system: Next.js UI, Express API, MongoDB via **Mongoose**, JWT auth, and RBAC.
 
----
-
-## 1. High-Level System Architecture
-
-```
-┌─────────────────────────────────────────────────────────────────────────────┐
-│                           GROWTEQ FARM MANAGEMENT                            │
-├─────────────────────────────────────────────────────────────────────────────┤
-│  Frontend (Next.js 14)          │  Backend (Express + TypeScript)           │
-│  • React 18, Tailwind, Radix   │  • REST API, JWT auth                       │
-│  • Axios client → API_URL      │  • Mongoose → MongoDB                      │
-│  • Auth via localStorage token │  • CORS: FRONTEND_ORIGIN                    │
-└─────────────────────────────────────────────────────────────────────────────┘
-                                        │
-                                        ▼
-                              ┌─────────────────────┐
-                              │  MongoDB (Atlas)    │
-                              │  MONGODB_URI        │
-                              │  Users, Farms,      │
-                              │  Sites, Evaluations,│
-                              │  Proposals, Notifs  │
-                              └─────────────────────┘
-```
-
-- **Frontend**: Next.js app (App Router), runs on port 3000 by default. Uses `NEXT_PUBLIC_API_URL` (e.g. `http://localhost:5000`) for API calls.
-- **Backend**: Express API, runs on port 5000. Connects to MongoDB via `MONGODB_URI`, validates JWT on protected routes.
-- **Database**: MongoDB. All entities use Mongoose schemas with `_id` (ObjectId) and timestamps.
+**Prisma is not used at runtime.** Leftover generated files live under `backend/src/generated/prisma/`. The API does not import Prisma. Persistence is **Mongoose** in `backend/src/models/`.
 
 ---
 
-## 2. Project Architecture
+## 1. System design
 
-### Frontend stack
+Two Node processes, one database:
 
-| Layer        | Technology |
-|-------------|------------|
-| Framework   | Next.js 14 (App Router) |
-| UI          | React 18, Tailwind CSS, Radix UI (shadcn-style components) |
-| State / API | React state, `lib/api.ts` (Axios), AuthContext |
-| Maps        | Leaflet, react-leaflet, @turf/turf |
-| Charts      | Recharts |
-| HTTP        | Axios (baseURL from `NEXT_PUBLIC_API_URL`), some pages use `fetch` with same base |
+| Process | Role | Default |
+|---------|------|---------|
+| Next.js 14 (App Router) | UI, client auth state, Axios → API | Port **3000** |
+| Express (`backend/src/server.ts`) | REST, JWT, RBAC, PDFs | Port **5000** (`PORT`) |
+| MongoDB | Documents | `MONGODB_URI` |
 
-### Backend stack
+Next.js never opens MongoDB. The browser calls Express. Express uses Mongoose. Mongoose talks to MongoDB.
 
-| Layer        | Technology |
-|-------------|------------|
-| Runtime     | Node.js, TypeScript (tsx in dev) |
-| Server      | Express 4 |
-| Database    | MongoDB via Mongoose 8 |
-| Auth        | JWT (jsonwebtoken), bcryptjs for passwords |
-| PDF         | jsPDF, pdfkit (reports/proposals) |
+```mermaid
+flowchart LR
+  Browser["Browser"]
+  Next["Next.js UI\n:3000"]
+  API["Express API\n:5000"]
+  Mongoose["Mongoose models"]
+  Mongo["MongoDB"]
 
-### Database structure
-
-- **Single MongoDB database** (name from `MONGODB_URI`).
-- **Collections** (one per model): `users`, `farms`, `sites`, `siteevaluations`, `proposals`, `notifications`.
-- **Relations**: User → Farms, SiteEvaluations, Proposals, Notifications; Farm → Sites (optional farmId); SiteEvaluation → Proposals (siteEvaluationId).
-
----
-
-## 3. Folder-by-Folder Explanation
-
-### Root
-
-- **`package.json`** — Root scripts: `dev`, `dev:backend`, `dev:full` (frontend + backend), `build`, `lint`.
-- **`ARCHITECTURE.md`** — This file.
-
-### Frontend
-
-| Folder / file       | Purpose |
-|---------------------|--------|
-| **`app/`**          | Next.js App Router: pages, layouts, providers. |
-| `app/layout.tsx`    | Root layout (font, Providers, optional Google Maps script). |
-| `app/page.tsx`      | Landing page. |
-| `app/login/page.tsx`| Login form; uses `authApi.login`, stores token, redirects. |
-| `app/logout/page.tsx` | Clears token and redirects. |
-| `app/providers.tsx` | Wraps app with AuthProvider (and any other providers). |
-| `app/context/auth-context.tsx` | Auth state: user, login, logout, `forge_token` in localStorage, `authApi.me()` on load. |
-| `app/context/company-context.tsx` | Company/organization context for UI. |
-| `app/dashboard/`   | Protected dashboard: layout (sidebar, nav), overview, farms, insights, etc. |
-| `app/dashboard/layout.tsx` | Dashboard shell: sidebar nav (Overview, Dashboard, Farms, Crops, Finance, Reports, Insights, Settings), auth, notifications drawer. |
-| `app/dashboard/ProtectedLayout.tsx` | Redirects unauthenticated users to login. |
-| `app/dashboard/overview/page.tsx` | Overview: calls `dashboardApi.summary()`, shows totalSites, totalArea, totalProposals, pipelineValue, averageROI. |
-| `app/dashboard/dashboard/page.tsx` | Work-in-progress dashboard: current site work, pending submissions, proposal generation. |
-| `app/dashboard/farms/page.tsx` | Farms list, site evaluations, map (Leaflet), create farm/site evaluation. |
-| `app/dashboard/insights/page.tsx` | Analytics: pipeline, site ranking, ROI distribution (fetches from `/api/insights/*`). |
-| `app/dashboard/site-evaluations/[id]/page.tsx` | Single site evaluation: boundary, cost, proposal recommend/PDF. |
-| `app/dashboard/finance/page.tsx` | Finance view; uses cost API by siteId. |
-| `app/dashboard/reports/page.tsx` | Reports. |
-| `app/dashboard/settings/page.tsx` | Settings. |
-| **`components/`**   | Reusable UI and feature components. |
-| `components/ui/`    | Primitive UI (button, card, input, dialog, table, etc.). |
-| `components/navigation/` | User profile, company/location selectors, last-login. |
-| `components/notifications/notifications-drawer.tsx` | Notifications list; uses notifications API. |
-| `components/welcome-modal.tsx` | Post-login welcome. |
-| **`hooks/`**       | Shared React hooks (e.g. `use-toast.ts`). |
-| **`lib/`**         | Shared frontend logic and API client. |
-| `lib/api.ts`       | **Central API layer**: Axios instance (baseURL from `NEXT_PUBLIC_API_URL`), Bearer token from `forge_token`, `authApi`, `farmsApi`, `siteEvaluationsApi`, `proposalsApi`, `notificationsApi`, `dashboardApi`. All return `{ success, data }`-style responses. |
-| `lib/utils.ts`     | Utilities (e.g. `cn` for classnames). |
-| `lib/map-provider.ts` | Map context/provider if used. |
-
-### Backend
-
-| Folder / file           | Purpose |
-|-------------------------|--------|
-| **`backend/src/config/`** | App and DB configuration. |
-| `config/db.ts`          | `connectDb()`: `mongoose.connect(process.env.MONGODB_URI)`, logs "MongoDB connected". Used in `server.ts` before starting Express. |
-| `config/env.ts`         | Reads PORT, NODE_ENV, MONGODB_URI, JWT_SECRET, JWT_EXPIRES_IN (dotenv). |
-| **`backend/src/models/`** | Mongoose schemas (collections). |
-| `models/User.ts`        | email, password (hashed), name, role (admin/user), timestamps. |
-| `models/Farm.ts`        | name, description?, location?, userId (ref User), timestamps. |
-| `models/Site.ts`        | name, geojson, area, perimeter, farmId? (ref Farm), timestamps. |
-| `models/SiteEvaluation.ts` | name, userId, farmId?, boundary[], area, areaUnit, slope?, infrastructureRecommendation?, costEstimate?, costCurrency?, status (draft/submitted), timestamps. |
-| `models/Proposal.ts`    | title, siteEvaluationId, userId, content (Mixed), status (draft/sent), timestamps. |
-| `models/Notification.ts`| userId, user (name, avatar), action, content, isRead, newNotification, timestamps. |
-| **`backend/src/routes/`** | Express routers mounted under `/api/*`. |
-| **`backend/src/controllers/`** | Request handlers (DB access, response shape). |
-| **`backend/src/middleware/`** | auth (JWT → req.auth), errorHandler, requestLogger, role. |
-| **`backend/src/services/`** | costEngine (cost by area + infrastructure type), tokenService. |
-| **`backend/src/utils/`**   | asyncHandler, ApiError. |
-| **`backend/src/server.ts`** | Express app, CORS, JSON, mounts all API routes, connectDb then start server. |
-
----
-
-## 4. API Workflow
-
-### How the frontend calls the backend
-
-1. **Base URL**: `lib/api.ts` uses `NEXT_PUBLIC_API_URL` (e.g. `http://localhost:5000`). Set in `.env` or env.
-2. **Auth**: After login, token is stored in `localStorage` as `forge_token`. Axios interceptor adds `Authorization: Bearer <token>` to every request from `api`.
-3. **Pattern**: Pages use `authApi`, `farmsApi`, `siteEvaluationsApi`, `proposalsApi`, `notificationsApi`, `dashboardApi` from `lib/api.ts`. Some pages (e.g. insights, finance, farms) also use `fetch`; for those, the backend must be reachable at the same origin or they must prefix with `NEXT_PUBLIC_API_URL` (insights currently uses relative `/api/insights/*` and may need that base URL to hit the Express server).
-
-### Example: `/api/sites`
-
-- **Frontend** (e.g. farms page): `fetch(\`${baseURL}/api/sites\`, { method: 'POST', body: JSON.stringify({ name, geojson, area, perimeter }) })` with Bearer token.
-- **Backend** `routes/sites.ts`: `POST /` → authMiddleware → validate body → `Site.create({ name, geojson, area, perimeter })` → respond `201` with `{ success: true, data: { ...site, id: _id } }`.
-- **Data flow**: Frontend → Express → Mongoose → MongoDB (insert) → Mongoose → Express → JSON → Frontend.
-
-### Example: `/api/dashboard/summary`
-
-- **Frontend** (`overview/page.tsx`): `dashboardApi.summary()` → GET `NEXT_PUBLIC_API_URL/api/dashboard/summary` with Bearer token.
-- **Backend** `routes/dashboard.ts`: GET `/summary` → authMiddleware → `getSummary` (dashboardController).
-- **Controller**: Loads farms and site evaluations for `req.auth.userId`, runs SiteEvaluation aggregation (revenue, draft/submitted counts, monthly revenue), returns `{ success: true, data: { activeSites, totalLandArea, farms, evaluations, totalRevenue, monthlyRevenue, ... } }`.
-- **Note**: The frontend Overview expects `totalSites`, `totalArea`, `totalProposals`, `pipelineValue`, `averageROI`. The current backend returns a different shape (e.g. `activeSites`, `totalLandArea`, `totalRevenue`). Either the backend should expose the overview metrics or the frontend should map from the current payload.
-
-### Example: `/api/insights`
-
-- **Endpoints**: `GET /api/insights/pipeline`, `GET /api/insights/site-ranking`, `GET /api/insights/roi-distribution`.
-- **Frontend** (`insights/page.tsx`): Uses `fetch("/api/insights/pipeline")` etc. (relative). To hit the Express backend, these should use the same base URL as the rest of the API (e.g. `NEXT_PUBLIC_API_URL`).
-- **Backend** `routes/insights.ts**: Auth → Proposal.find() / Site.find() → pipeline value (sum of proposal content.investment/estimatedCost), proposal count; site ranking (sites by area); ROI distribution (content.roiMonths + investment). Response shape: `{ success: true, data: ... }`.
-
-### Example: `/api/proposals`
-
-- **Frontend**: `proposalsApi.list()`, `proposalsApi.create({ title, siteEvaluationId, content })`, etc., from `lib/api.ts` → backend `/api/proposals`.
-- **Backend** `routes/proposals.ts`: GET `/`, POST `/`, GET `/:id`, PATCH `/:id`, GET `/:id/pdf`, plus recommend/save and site/farm-scoped lists. Controllers use Proposal and SiteEvaluation models and return `{ success: true, data }`.
-
-### End-to-end data flow
-
-```
-Frontend (React)  →  Axios/fetch (Bearer token)  →  Express (CORS, auth)
-  →  Route  →  Controller  →  Mongoose model  →  MongoDB
-  →  Model  →  Controller  →  res.json({ success, data })  →  Frontend
+  Browser --> Next
+  Next -->|"JSON + Authorization: Bearer JWT"| API
+  API --> Mongoose
+  Mongoose --> Mongo
 ```
 
----
+CORS allows `FRONTEND_URL`, `FRONTEND_ORIGIN`, and `http://localhost:3000` (`credentials: true`).
 
-## 5. Database Schema (MongoDB Collections)
-
-| Collection         | Model            | Key fields |
-|--------------------|------------------|------------|
-| **users**          | User             | email (unique), password (hashed), name, role (admin/user), timestamps. |
-| **farms**          | Farm             | name, description?, location?, userId (ref User), timestamps. |
-| **siteevaluations**| SiteEvaluation   | name, userId, farmId?, boundary[], area, areaUnit, slope?, infrastructureRecommendation?, costEstimate?, costCurrency?, status (draft/submitted), timestamps. |
-| **sites**          | Site             | name, geojson, area, perimeter, farmId?, timestamps. |
-| **proposals**       | Proposal         | title, siteEvaluationId (ref SiteEvaluation), userId, content (Mixed: e.g. investment, roiMonths), status (draft/sent), timestamps. |
-| **notifications**  | Notification     | userId, user (name, avatar), action, content, isRead, newNotification, timestamps. |
-
-- All use **`_id`** (ObjectId) and **timestamps** (createdAt, updatedAt).
-- References are stored as ObjectIds; `.populate()` is used where needed (e.g. proposal → siteEvaluation).
+Health: `GET /health` on the API. The UI pings it on load (`app/providers.tsx`) so a cold host can wake up.
 
 ---
 
-## 6. Analytics / Dashboard Metrics Logic
+## 2. Next.js ↔ Mongoose ↔ MongoDB
 
-- **Total sites**: In the **current** backend, dashboard summary does not return a field named `totalSites`. It returns `activeSites` (count of site evaluations for the user) and `totalFarms`. So “total sites” in the UI could be mapped from `activeSites` or from a future backend field that counts Site + SiteEvaluation.
-- **Total area**: From **SiteEvaluation**: sum of `area` for the user’s evaluations → exposed as `totalLandArea` in the dashboard summary.
-- **Pipeline value**: In **insights** route: sum of `content.investment` (or `content.estimatedCost`) across all Proposals. In dashboard controller, **totalRevenue** is sum of `costEstimate` of submitted SiteEvaluations (different concept: evaluation cost, not proposal investment).
-- **Average ROI**: Not computed in the current dashboard controller. Could be derived from Proposals’ `content.roiMonths` (e.g. in insights) and then averaged; Overview expects `averageROI` from the summary API.
-- **Revenue trend**: Dashboard controller returns **monthlyRevenue**: aggregation on SiteEvaluation (status submitted) by month from `updatedAt`, sum of `costEstimate` per month. Frontend Overview shows a placeholder for “Connect monthly revenue analytics”; the data exists in the summary response as `monthlyRevenue`.
+There is **no Prisma client** and no Next.js server action that writes to the database. The contract is HTTP.
 
-Cost per acre and infrastructure (used in cost route and costEngine):
+```mermaid
+sequenceDiagram
+  participant Page as Next.js page
+  participant Axios as lib/api.ts
+  participant MW as authMiddleware
+  participant Ctrl as Controller
+  participant Model as Mongoose
+  participant DB as MongoDB
 
-- **costEngine** (`services/costEngine.ts`): `calculateCost(area, infrastructure)` uses fixed cost per acre: Polyhouse 8L, Shade Net 4L, Open Field 1.5L (INR). Used for estimates and cost API logic.
+  Page->>Axios: e.g. farmsApi.list()
+  Axios->>Axios: Bearer from localStorage forge_token
+  Axios->>MW: /api/...
+  MW->>MW: jwt.verify JWT_SECRET
+  MW->>Model: User.findById payload.userId
+  MW->>Ctrl: req.user / req.auth
+  Ctrl->>Model: find / create / update
+  Model->>DB: driver
+  DB-->>Page: JSON success + data
+```
 
----
+**Frontend (`lib/api.ts`):** Axios `baseURL` = `NEXT_PUBLIC_API_URL` (fallback `http://localhost:5000`). Request interceptor sets `Authorization: Bearer <token>`. On **401** (except login), it clears `forge_token` / `forge_user` and sends the user to `/login`.
 
-## 7. Code Relationships (Models ↔ Routes ↔ Controllers)
+**Backend:** `connectDb()` in `backend/src/config/db.ts` runs `mongoose.connect(MONGODB_URI)` before `listen`. Missing `MONGODB_URI` or `JWT_SECRET` → process **exits**.
 
-- **Auth**: `routes/auth.ts` → `authController` (login, register, me) → User model, JWT, bcrypt.
-- **Farms**: `routes/farms.ts` → `farmController` (list, create, get, update, delete) → Farm model, filtered by `userId`.
-- **Sites**: `routes/sites.ts` → inline POST create → Site model; GET/PUT/DELETE and details/boundary/export → `siteEvaluationController` (SiteEvaluation model).
-- **Site evaluations**: `routes/siteEvaluations.ts` → `siteEvaluationController` → SiteEvaluation model.
-- **Proposals**: `routes/proposals.ts` → `proposalController` (list, create, get, update, PDF, recommend, save, by site/farm) → Proposal, SiteEvaluation.
-- **Notifications**: `routes/notifications.ts` → `notificationController` → Notification model.
-- **Dashboard**: `routes/dashboard.ts` → `dashboardController.getSummary` → Farm, SiteEvaluation (and aggregation).
-- **Cost**: `routes/cost.ts` → inline handler → SiteEvaluation.findById, Site.findById (by ObjectId), then cost formula (costPerAcre × area, etc.).
-- **Insights**: `routes/insights.ts` → inline handlers → Proposal.find(), Site.find(); pipeline value, site ranking, ROI distribution.
-- **Maps**: `routes/maps.ts` → `mapsController` (e.g. snapshot).
-- **Reports**: `routes/reports.ts` → `reportsController`.
-
-All protected routes use `authMiddleware` (JWT → `req.auth.userId`). Controllers use `asyncHandler` and throw `ApiError`; errors are handled by `errorHandler` middleware.
-
----
-
-## 8. Key Files to Understand the Project Quickly
-
-| Goal                     | Files to read |
-|--------------------------|----------------|
-| How frontend talks to API | `lib/api.ts` |
-| Auth flow                 | `app/context/auth-context.tsx`, `backend/src/middleware/auth.ts`, `backend/src/controllers/authController.ts` |
-| Dashboard data            | `app/dashboard/overview/page.tsx`, `backend/src/controllers/dashboardController.ts`, `backend/src/routes/dashboard.ts` |
-| Farms & site evaluations  | `app/dashboard/farms/page.tsx`, `backend/src/controllers/farmController.ts`, `backend/src/controllers/siteEvaluationController.ts` |
-| Proposals & cost          | `backend/src/routes/proposals.ts`, `backend/src/controllers/proposalController.ts`, `backend/src/routes/cost.ts`, `backend/src/services/costEngine.ts` |
-| Insights / analytics      | `backend/src/routes/insights.ts`, `app/dashboard/insights/page.tsx` |
-| DB and config             | `backend/src/config/db.ts`, `backend/src/server.ts`, all under `backend/src/models/` |
-| Route mounting            | `backend/src/server.ts` (lines 63–73) |
+Typical JSON: `{ success: true, data }` or `{ success: false, error }`.
 
 ---
 
-## 9. Summary
+## 3. Runtime layout
 
-- **Growteq** is a farm management app: users manage farms, site evaluations (with boundaries and infrastructure recommendations), and proposals. The dashboard and insights show aggregates and trends.
-- **Frontend**: Next.js 14, React, Tailwind, Radix; main API client in `lib/api.ts` with Bearer token; some pages use `fetch` and should use the same API base URL for insights/cost.
-- **Backend**: Express + Mongoose; JWT auth; all data in MongoDB (User, Farm, Site, SiteEvaluation, Proposal, Notification).
-- **Data flow**: Request → auth → route → controller → model → MongoDB → same path back as `{ success, data }`.
-- **Dashboard metrics**: Total area and revenue/trend come from SiteEvaluation aggregation; pipeline value and ROI from Proposals (insights). Overview page expects a summary shape that the current dashboard/summary endpoint may need to align with (totalSites, totalArea, totalProposals, pipelineValue, averageROI).
+```
+growteq-forge/
+├── app/                              # Next.js App Router
+│   ├── login, register, invite/[token], logout
+│   ├── context/auth-context.tsx
+│   ├── providers.tsx                # AuthProvider + GET /health
+│   └── dashboard/
+│       ├── layout.tsx               # Shell; wraps ProtectedLayout
+│       └── ProtectedLayout.tsx
+├── lib/api.ts
+├── lib/permissions.ts                 # Client RBAC (keep in sync with backend)
+├── components/dashboard/dashboard-page-guard.tsx
+└── backend/src/
+    ├── server.ts
+    ├── config/db.ts, env.ts
+    ├── models/
+    ├── routes/, controllers/, middleware/, services/
+    └── scripts/ensureAdminUser.ts
+```
 
-Using this document plus the key files above, a developer can navigate and extend the system without reading every file.
+### API mounts (`server.ts`)
+
+| Prefix | Area |
+|--------|------|
+| `/api/auth` | Register (pending), login, `GET /me` |
+| `/api/farms`, `/api/sites`, `/api/site-evaluations` | Farms, maps, evaluations |
+| `/api/proposals`, `/api/notifications` | Proposals, notifications |
+| `/api/dashboard`, `/api/insights`, `/api/finance`, `/api/cost` | Aggregates, costing |
+| `/api/reports`, `/api/maps` | PDFs, map helpers |
+| `/api/settings` | Team + infrastructure config |
+| `/api/audit` | Audit log |
+| `/api/invite`, `/api/user-requests` | Invites, registration approval |
+
+Protected routes use `authMiddleware`. Farm **delete** also requires **admin** (`authorizeRoles("admin")` in `backend/src/routes/farms.ts`).
+
+---
+
+## 4. Data model (MongoDB + Mongoose)
+
+Relations are **ObjectId refs**, not Prisma relations.
+
+```mermaid
+erDiagram
+  User ||--o{ Farm : owns
+  User ||--o{ UserRequest : "approval creates User"
+  User ||--o{ AuditLog : acts
+  Farm ||--o{ Site : contains
+  Site ||--o{ SiteEvaluation : evaluated
+  SiteEvaluation ||--o{ Proposal : generates
+  User ||--o{ Invite : sends
+
+  User {
+    ObjectId _id
+    string email
+    string role
+    object permissions
+  }
+  Farm {
+    ObjectId userId
+    string name
+  }
+  Site {
+    ObjectId farmId
+    object geojson
+    string status
+  }
+  SiteEvaluation {
+    ObjectId siteId
+    ObjectId farmId
+    ObjectId userId
+    string status
+  }
+  Proposal {
+    ObjectId siteEvaluationId
+    ObjectId userId
+    string status
+  }
+  UserRequest {
+    string email
+    string status
+  }
+```
+
+| Model | Role |
+|-------|------|
+| `User` | Login identity, `role`, optional per-module `permissions` |
+| `UserRequest` | Pending / approved / rejected self-registration |
+| `Farm` / `Site` | Geography; site `geojson`, area, perimeter |
+| `SiteEvaluation` | Soil/water/slope, infra snapshot, investment |
+| `Proposal` | Tied to evaluation; draft / sent / recommended / rejected |
+| `Notification` | In-app notifications |
+| `AuditLog` | Security-relevant actions |
+| `Invite` | Invite token, role, permissions |
+| `Infrastructure` / `InfraConfigMeta` | Shared infra cost/ROI config |
+
+Users **without write** on a module are often limited to **their own** rows (`needsOwnUserScope` in `backend/src/utils/permissionUtils.ts`). Admins are not scoped.
+
+---
+
+## 5. Auth flow (JWT)
+
+Login is **not** admin-only. **Any approved `User`** with a valid password receives a JWT. **Admin** is a role on that user. Self-registration does **not** create a `User` until an admin approves the `UserRequest`.
+
+### Login
+
+```mermaid
+sequenceDiagram
+  participant UI as /login
+  participant Ctx as AuthProvider
+  participant API as POST /api/auth/login
+  participant User as users
+  participant JWT as jsonwebtoken
+
+  UI->>Ctx: login email password
+  Ctx->>API: JSON
+  API->>User: find email + comparePassword
+  alt No User, pending UserRequest
+    API-->>UI: 403 not approved
+  else Bad password / unknown
+    API-->>UI: 401
+  else User + password OK
+    API->>JWT: sign userId, email, role
+    API-->>Ctx: token + user + permissions
+    Ctx->>Ctx: localStorage forge_token, forge_user
+    Ctx->>UI: dashboard
+  end
+```
+
+**Token:** HMAC JWT (`JWT_SECRET`), expiry `JWT_EXPIRES_IN` (default `7d`). Payload: `{ userId, email, role }`. Issued by `signToken` in `backend/src/services/tokenService.ts`.
+
+**Browser:** `localStorage` keys `forge_token` and `forge_user`. `ProtectedLayout` redirects to `/login` if the token is missing or `isAuthenticated` is false. After a stored token is found, `GET /api/auth/me` refreshes the user (including effective permissions).
+
+**API:** `authMiddleware` reads `Authorization: Bearer`, `jwt.verify`s, loads `User` by `userId`, sets `req.user` / `req.auth`. Invalid token → 401.
+
+Passwords: **bcrypt** on `User` and `UserRequest` (password fields `select: false`).
+
+### Registration (admin gate)
+
+```mermaid
+flowchart TD
+  A[POST /api/auth/register] --> B[UserRequest pending]
+  B --> C[Admin Settings / user-requests]
+  C -->|approve| D[Create User role + permissions]
+  C -->|reject| E[UserRequest rejected]
+  D --> F[POST /api/auth/login]
+```
+
+Until a `User` exists, a matching pending request on login returns **403**. Recovery: `backend/src/scripts/ensureAdminUser.ts` (does not wipe farms).
+
+Optional **invites** (`/api/invite`, `/invite/[token]`) can create a user with role/permissions from the invite.
+
+---
+
+## 6. RBAC
+
+Two layers, both enforced:
+
+1. **Role** — canonical `admin` | `editor` | `viewer` on `User.role`. Legacy values (`field_evaluator`, `sales_associate`, `user`, UI labels) map via `normalizeRole`.
+2. **Module permissions** — `{ read, write }` per module: `farms`, `sites`, `evaluations`, `proposals`, `reports`, `finance`, `settings`.
+
+**Admins** always pass `checkPermission`. For others, stored `user.permissions` **patches** role defaults (`getEffectivePermissions`). Login and `/me` return that merged map so the UI can match the API.
+
+### Defaults when `permissions` is omitted
+
+| Module | admin | editor | viewer |
+|--------|-------|--------|--------|
+| farms, sites, evaluations, proposals | read+write | read+write | read |
+| reports | read+write | read | read |
+| finance | read+write | none | none |
+| settings | read+write | none | none |
+
+### Enforcement
+
+| Layer | Mechanism |
+|-------|-----------|
+| API | `checkPermission(module, "read" \| "write")` after `authMiddleware` |
+| API | `authorizeRoles("admin")` for some deletes (e.g. farm) |
+| UI | Sidebar via `canReadModule` |
+| UI | `DashboardPageGuard` |
+| UI | Actions via `canWriteModule` / `hasPermission` |
+
+Keep **`lib/permissions.ts`** defaults aligned with **`backend/src/utils/permissionUtils.ts`**.
+
+```mermaid
+flowchart TD
+  Req[Request] --> Auth{authMiddleware JWT + User}
+  Auth -->|401| Deny1[Unauthorized]
+  Auth --> Admin{admin role?}
+  Admin -->|yes| Allow[Handler]
+  Admin --> Perm{checkPermission}
+  Perm -->|no| Deny2[403]
+  Perm -->|yes| Scope{needsOwnUserScope?}
+  Scope -->|yes| Own[Filter by userId]
+  Scope -->|no| All[Unscoped query]
+  Own --> Allow
+  All --> Allow
+```
+
+---
+
+## 7. Frontend (protected)
+
+`app/page.tsx` redirects to `/dashboard/overview`. `app/dashboard/layout.tsx` wraps children in `ProtectedLayout`.
+
+Areas: Overview, Dashboard (WIP), Farms (Leaflet), Crops, Evaluations, Finance, Reports, Insights, Settings (team + infra; needs settings **read**).
+
+Maps: Leaflet on farms. Optional `NEXT_PUBLIC_MAPBOX_TOKEN` for satellite tiles. PDFs may use backend `MAPBOX_TOKEN`.
+
+---
+
+## 8. Cross-cutting
+
+- **Audit:** `logAudit` writes login, registration requests, approvals, and other security events (`AuditLog`). Failures are logged, not thrown on the hot path.
+- **Errors:** `asyncHandler` + `errorHandler`. Malformed JSON → **400**.
+- **PDF / images:** jsPDF, pdfkit, sharp (logo rasterization on API start).
+- **Email:** SMTP optional; if `SMTP_HOST` is unset, invite links go to the console.
+
+---
+
+## 9. Files to read first
+
+| Topic | Files |
+|-------|--------|
+| Mount + CORS | `backend/src/server.ts` |
+| Mongo | `backend/src/config/db.ts` |
+| JWT | `backend/src/services/tokenService.ts`, `backend/src/middleware/auth.ts` |
+| Login / register | `backend/src/controllers/authController.ts` |
+| RBAC | `backend/src/utils/permissionUtils.ts`, `backend/src/middleware/permissionMiddleware.ts` |
+| Client HTTP | `lib/api.ts` |
+| Client session | `app/context/auth-context.tsx`, `app/dashboard/ProtectedLayout.tsx` |
+| Client RBAC | `lib/permissions.ts` |
+
+---
+
+## 10. What this is not
+
+- **Not** Prisma / Postgres. Do not treat `DATABASE_URL` or `prisma migrate` as live.
+- **Not** Next.js Route Handlers as the system of record. Browser `/api/*` calls go to Express via `NEXT_PUBLIC_API_URL`.
+- **Not** cookie-session auth. The browser stores a **JWT** in `localStorage`.

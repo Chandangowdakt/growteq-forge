@@ -1,128 +1,213 @@
-# Growteq Farm Management System
+# Growteq Forge
 
-Full-stack farm operations platform for Growteq Agri Farms: farms, sites, evaluations, proposals, reporting, and team administration.
+Growteq Forge is a farm operations app for Growteq Agri Farms. It covers farms and mapped sites, site evaluations, proposals, reports, finance/insights, and team administration.
 
-## Features
+**Frontend:** Next.js 14 (App Router) at the repo root. **API:** Express + TypeScript in `backend/`. **Database:** MongoDB via **Mongoose**.
 
-- **Farm management** — Farms, mapped sites, boundaries, and site records
-- **Site evaluation** — Structured evaluations and workflows
-- **Proposal generation** — Proposals tied to sites and approvals
-- **Reports** — PDF / Excel exports where configured
-- **RBAC** — Roles (`admin`, `editor`, `viewer`) plus per-module read/write permissions
-- **Request-based onboarding** — Public registration creates a pending request; admins approve or reject from Settings
-- **Audit logs** — Security-relevant actions recorded for review (admin / settings access)
-- **Infrastructure & cost** — Shared infrastructure configuration and cost/finance views (role-gated)
-- **Optional email invites** — Backend supports invite-by-email (SMTP optional); primary admin flow uses registration requests
+New users **register a request**. An **admin** must approve it before they can sign in.
+
+---
 
 ## Tech stack
 
-| Layer    | Stack |
-|----------|--------|
-| Frontend | Next.js (App Router), React, Tailwind CSS, shadcn-style UI |
-| Backend  | Node.js, Express, MongoDB (Mongoose) |
-| Auth     | JWT (Bearer token stored in `localStorage` as `forge_token`) |
-| Package manager | pnpm |
+| Layer | This repo |
+|--------|-----------|
+| Frontend | Next.js 14 (App Router), React 18, TypeScript, Tailwind CSS, Radix UI |
+| HTTP | Axios (`lib/api.ts`) |
+| Maps / charts | Leaflet, react-leaflet, Turf, Recharts |
+| Backend | Node.js, Express, TypeScript |
+| Database | **MongoDB** via **Mongoose** |
+| Auth | JWT (`Authorization: Bearer`); token in `localStorage` as `forge_token` |
+| Reports | jsPDF, pdfkit, sharp |
+| Packages | **pnpm** |
 
-## Project layout
+**Prisma is not used.** Leftover generated files live under `backend/src/generated/prisma/`. Runtime data access is Mongoose models in `backend/src/models/`. Do not add Prisma `DATABASE_URL` or migrations for this app.
+
+---
+
+## Folder structure
 
 ```
 growteq-forge/
-├── app/                 # Next.js App Router (UI)
-├── components/          # Shared React components
-├── lib/                 # API client, permissions helpers
+├── app/                         # Next.js App Router (login, register, dashboard)
+├── components/                  # Shared UI
+├── lib/                         # API client, permissions
+├── hooks/
+├── public/                      # Frontend static files
+├── styles/                      # Global CSS
 ├── backend/
-│   └── src/             # Express API, models, routes
-├── public/              # Static assets (frontend)
+│   ├── src/
+│   │   ├── config/              # env, MongoDB
+│   │   ├── models/             # Mongoose schemas
+│   │   ├── routes/
+│   │   ├── controllers/
+│   │   ├── middleware/
+│   │   ├── services/
+│   │   ├── scripts/           # ensureAdminUser.ts
+│   │   ├── seed.ts            # demo seed (destructive)
+│   │   └── generated/prisma/ # unused leftover
+│   └── public/
+├── .env.example                  # frontend env names → copy to .env.local
+├── backend/.env.example         # backend env names → copy to backend/.env
 └── README.md
 ```
 
+---
+
 ## Prerequisites
 
-- Node.js 20+ recommended  
-- pnpm  
+- Node.js 20+
+- pnpm
 - MongoDB (local or Atlas)
+
+---
+
+## Environment variables
+
+Copy the example files and set values on your machine. **Never commit** `.env`, `.env.local`, or `backend/.env`.
+
+Names only — no secrets or sample values here.
+
+### Frontend (`.env.local` at repo root)
+
+| Name | Required | Role |
+|------|----------|------|
+| `NEXT_PUBLIC_API_URL` | Recommended | Express base URL (code falls back if unset) |
+| `NEXT_PUBLIC_GOOGLE_MAPS_API_KEY` | No | Optional Google Maps script |
+| `NEXT_PUBLIC_MAPBOX_TOKEN` | No | Optional Mapbox tiles on the farms map |
+
+### Backend (`backend/.env`)
+
+The API **exits on startup** if `MONGODB_URI` or `JWT_SECRET` is missing.
+
+| Name | Required | Role |
+|------|----------|------|
+| `MONGODB_URI` | Yes | MongoDB connection string |
+| `JWT_SECRET` | Yes | JWT signing |
+| `JWT_EXPIRES_IN` | No | Token lifetime |
+| `PORT` | No | API port |
+| `NODE_ENV` | No | `development` / `production` |
+| `FRONTEND_URL` | Recommended | CORS and invite links |
+| `FRONTEND_ORIGIN` | No | Extra CORS origin |
+| `MAPBOX_TOKEN` | No | PDF / maps satellite snapshots |
+| `SMTP_HOST` | No | Email invites (omit to log links in the console) |
+| `SMTP_PORT` | No | SMTP port |
+| `SMTP_SECURE` | No | SMTP TLS flag |
+| `SMTP_USER` | No | SMTP user |
+| `SMTP_PASS` | No | SMTP password |
+| `SMTP_FROM` | No | From address |
+
+**Admin recovery script only** (not needed to start the servers): `ENSURE_ADMIN_EMAIL`, `ENSURE_ADMIN_PASSWORD`, `ENSURE_ADMIN_NAME`, `ADMIN_PASSWORD`.
+
+---
 
 ## Setup
 
-### 1. Backend
+### Backend
 
 ```bash
 cd backend
 cp .env.example .env
-# Edit .env: set MONGODB_URI and JWT_SECRET (required in production)
 pnpm install
-pnpm run build
 ```
 
-Optional seed data (creates demo data; **resets** farms/sites/evaluations for that admin):
+Set `MONGODB_URI` and `JWT_SECRET` in `backend/.env`.
+
+### Frontend
+
+From the repository root:
 
 ```bash
-pnpm exec tsx src/seed.ts
-```
-
-If the admin `User` was deleted or you are locked out, recreate **`admin@growteq.com`** from `backend/` (loads `backend/.env`):
-
-```bash
-pnpm exec tsx src/scripts/ensureAdminUser.ts admin123
-```
-
-If that email already exists but the password is wrong:
-
-```bash
-pnpm exec tsx src/scripts/ensureAdminUser.ts --reset admin123
-```
-
-Alternatively: `ENSURE_ADMIN_PASSWORD='…' pnpm run ensure-admin`
-
-Run API:
-
-```bash
-pnpm run dev          # development (tsx watch)
-# or after build:
-pnpm run start        # serves compiled dist/server.js
-```
-
-API defaults to **http://localhost:5000** (or `PORT` in `.env`).
-
-### 2. Frontend (repository root)
-
-```bash
-# From repository root
 cp .env.example .env.local
-# Ensure NEXT_PUBLIC_API_URL matches your API (e.g. http://localhost:5000)
 pnpm install
+```
+
+Set `NEXT_PUBLIC_API_URL` to the API origin (same host/port as `PORT` in `backend/.env`).
+
+---
+
+## Run locally
+
+Default ports: API **5000**, Next.js **3000**.
+
+**Two terminals**
+
+```bash
+# API
+cd backend
+pnpm run dev
+
+# UI (repo root)
 pnpm dev
 ```
 
-App defaults to **http://localhost:3000**.
+**One command (root)**
 
-### 3. Production notes
+```bash
+pnpm dev:full
+```
 
-- Set strong `JWT_SECRET` and real `MONGODB_URI`  
-- Set `FRONTEND_URL` on the backend for CORS and invite links  
-- Do not commit `.env` or `.env.local`
+Open the Next.js URL in the browser. Unauthenticated visits go to `/login`.
 
-## Demo login (after seed)
+API health: `GET /health` on the backend port.
 
-If you use the provided seed script, typical demo admin:
+---
 
-- **Email:** `admin@growteq.com`  
-- **Password:** `admin123`  
+## Admin access
 
-Change or remove demo users in production.
+Sign-up does not create a live `User` until an admin approves the request. If you have **no admin** in MongoDB, from `backend/`:
 
-## Registration flow
+```bash
+pnpm exec tsx src/scripts/ensureAdminUser.ts
+```
 
-New users use **Register** to submit a request. An **admin** opens **Settings → Approve Requests** (or the **User Requests** tab), assigns role and permissions, and approves. Until approval, sign-in returns a clear “not approved” response.
+Or `pnpm run ensure-admin` with `ENSURE_ADMIN_PASSWORD` set.
 
-## Scripts (root)
+If the user exists and you need a new password:
+
+```bash
+pnpm exec tsx src/scripts/ensureAdminUser.ts --reset
+```
+
+You can pass the password as a CLI argument. Default email is `admin@growteq.com` unless `ENSURE_ADMIN_EMAIL` is set.
+
+`pnpm run seed` (`src/seed.ts`) loads demo data and **deletes** that admin’s farms/sites/evaluations/proposals. Use `ensureAdminUser` if you only need login.
+
+---
+
+## Scripts
+
+**Root**
 
 | Command | Description |
 |---------|-------------|
 | `pnpm dev` | Next.js dev server |
-| `pnpm dev:backend` | API dev server (from `backend`) |
-| `pnpm dev:full` | Frontend + backend together |
-| `pnpm build` | Production Next.js build |
+| `pnpm dev:backend` | Express API |
+| `pnpm dev:full` | Frontend + backend |
+| `pnpm build` | Next.js production build |
+| `pnpm start` | Next.js production server |
+| `pnpm lint` | Lint |
+
+**`backend/`**
+
+| Command | Description |
+|---------|-------------|
+| `pnpm run dev` | API with tsx watch |
+| `pnpm run build` | Compile to `dist/` |
+| `pnpm run start` | Run compiled server |
+| `pnpm run typecheck` | TypeScript check |
+| `pnpm run seed` | Demo seed (destructive) |
+| `pnpm run ensure-admin` | Create or recover admin `User` |
+
+---
+
+## Registration
+
+1. **Register** → `POST /api/auth/register` → pending `UserRequest`.
+2. Admin approves in **Settings** (role and permissions).
+3. Until then, login reports that the account is not approved.
+
+---
 
 ## License
 
